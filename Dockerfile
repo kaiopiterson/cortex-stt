@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.3.2-cudnn9-runtime-ubuntu22.04
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
 LABEL org.opencontainers.image.title="CortexLab STT Engine"
 LABEL org.opencontainers.image.description="CortexLab Speech-to-Text Engine"
@@ -23,8 +23,8 @@ RUN apt-get update \
 WORKDIR /srv
 COPY requirements.txt /srv/requirements.txt
 RUN python3 -m pip install --no-cache-dir -r /srv/requirements.txt \
-    && python3 -m pip install --no-cache-dir "pydantic-settings>=2.8,<3" \
-    && python3 -m pip check
+    && python3 -m pip check \
+    && python3 -c "import faster_whisper, requests"
 
 RUN useradd -m appuser \
     && mkdir -p /models \
