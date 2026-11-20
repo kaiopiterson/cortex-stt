@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     workers: int = Field(default=2, ge=1, le=16)
     beam_size: int = Field(default=1, ge=1, le=10)
     sessions: int = Field(default=10, ge=1, le=100)
+    stream_sessions: int | None = Field(default=None, ge=1, le=100)
+    rest_concurrency: int = Field(default=4, ge=1, le=100)
     inference_queue_timeout_seconds: float = Field(default=5.0, gt=0, le=120)
     sample_rate: Literal[16000] = 16000
     channels: Literal[1] = 1

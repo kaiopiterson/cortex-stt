@@ -30,7 +30,8 @@ def application():
     app = FastAPI()
     app.state.settings = settings
     app.state.inference_service = inference
-    app.state.session_slots = asyncio.Semaphore(settings.sessions)
+    app.state.stream_slots = asyncio.Semaphore(settings.stream_sessions or settings.sessions)
+    app.state.rest_slots = asyncio.Semaphore(settings.rest_concurrency)
     app.include_router(api_router)
     yield app
     limiter.reset()
@@ -74,3 +75,21 @@ async def test_models_rate_limit(application):
             assert response.status_code == 200
         response = await client.get("/v1/models", headers={"Authorization": f"Bearer {TEST_KEY}"})
     assert response.status_code == 429
+
+@pytest.mark.asyncio
+async def test_rest_available_with_all_stream_slots_taken(application):
+    slots = application.state.stream_slots
+    for _ in range(application.state.settings.sessions):
+        await slots.acquire()
+    try:
+        assert slots.locked()
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application), base_url="http://test") as client:
+            response = await client.post(
+                "/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {TEST_KEY}"},
+                files={"file": ("test.wav", b"mock audio", "audio/wav")},
+            )
+        assert response.status_code == 200
+    finally:
+        for _ in range(application.state.settings.sessions):
+            slots.release()

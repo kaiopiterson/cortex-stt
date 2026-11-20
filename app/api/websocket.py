@@ -203,7 +203,7 @@ async def websocket_error(websocket: WebSocket, code: str, message: str, close_c
 async def stream_audio(websocket: WebSocket) -> None:
     settings: Settings = websocket.app.state.settings
     inference: InferenceService = websocket.app.state.inference_service
-    semaphore: asyncio.Semaphore = websocket.app.state.session_slots
+    semaphore: asyncio.Semaphore = websocket.app.state.stream_slots
     acquired = False
     session = None
     await websocket.accept()

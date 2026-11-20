@@ -57,7 +57,7 @@ async def transcribe_audio(request: Request, settings: SettingsDependency,
     content_type = file.content_type or ""
     if content_type and content_type != "application/octet-stream" and not content_type.startswith(SUPPORTED_AUDIO_TYPES):
         raise HTTPException(415, "Unsupported audio content type")
-    semaphore = request.app.state.session_slots
+    semaphore = request.app.state.rest_slots
     acquired = False
     try:
         await acquire_session(semaphore, settings.inference_queue_timeout_seconds)

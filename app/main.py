@@ -25,7 +25,8 @@ async def lifespan(app: FastAPI):
     inference_service = InferenceService(settings=settings)
     app.state.settings = settings
     app.state.inference_service = inference_service
-    app.state.session_slots = asyncio.Semaphore(settings.sessions)
+    app.state.stream_slots = asyncio.Semaphore(settings.stream_sessions or settings.sessions)
+    app.state.rest_slots = asyncio.Semaphore(settings.rest_concurrency)
     app.state.limiter = limiter
     
     try:
