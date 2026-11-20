@@ -12,7 +12,6 @@ import av
 import ctranslate2
 import numpy as np
 from faster_whisper import WhisperModel
-from faster_whisper.audio import decode_audio
 from app.core.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -155,11 +154,42 @@ class InferenceService:
             self._model = None
             logger.info("STT inference service stopped")
 
+    def _decode_bounded(self, audio: BytesIO) -> np.ndarray:
+        rate = self.settings.sample_rate
+        seconds = self.settings.max_audio_duration_seconds
+        limit = rate * seconds
+        audio.seek(0)
+        with av.open(audio, mode="r") as container:
+            if not container.streams.audio:
+                raise InvalidAudioError("Audio stream unavailable")
+            stream = container.streams.audio[0]
+            if container.duration is not None and container.duration / av.time_base > seconds:
+                raise AudioDurationError("Maximum audio duration exceeded")
+            if stream.duration is not None and stream.time_base is not None:
+                if float(stream.duration * stream.time_base) > seconds:
+                    raise AudioDurationError("Maximum audio duration exceeded")
+            resampler = av.AudioResampler(format="fltp", layout="mono", rate=rate)
+            chunks: list[np.ndarray] = []
+            count = 0
+
+            def consume(frames):
+                nonlocal count
+                for frame in frames:
+                    count += frame.samples
+                    if count > limit:
+                        raise AudioDurationError("Maximum audio duration exceeded")
+                    chunks.append(frame.to_ndarray().reshape(-1).astype(np.float32, copy=False))
+
+            for frame in container.decode(stream):
+                consume(resampler.resample(frame))
+            consume(resampler.resample(None))
+        return np.concatenate(chunks) if chunks else np.empty(0, dtype=np.float32)
+
     def _prepare_audio(self, audio: np.ndarray | BytesIO) -> np.ndarray:
         if isinstance(audio, BytesIO):
             try:
                 audio.seek(0)
-                samples = decode_audio(audio, sampling_rate=self.settings.sample_rate)
+                samples = self._decode_bounded(audio)
             except (av.error.FFmpegError, ValueError, OSError) as exc:
                 raise InvalidAudioError("Unable to decode audio") from exc
         elif isinstance(audio, np.ndarray):
