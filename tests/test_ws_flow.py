@@ -9,13 +9,14 @@ from starlette.testclient import TestClient
 from app.api.websocket import router
 from app.core.config import Settings
 from app.services.inference import InferenceService, TranscriptionResult, TranscriptionSegment
+from tests.gateway_state import install_gateway_state
 
 KEY = "test-only-" + "x" * 40
 PATH = "/v1/audio/stream"
 
 
 @pytest.fixture
-def application():
+def application(tmp_path):
     settings = Settings(api_key=KEY, device="cpu", compute="int8", stream_auth_timeout_seconds=1)
     result = TranscriptionResult(
         "Olá", (TranscriptionSegment(0, 0.4, "Olá", -0.1, 0.1),),
@@ -29,6 +30,7 @@ def application():
     app.state.settings = settings
     app.state.inference_service = service
     app.state.stream_slots = asyncio.Semaphore(2)
+    install_gateway_state(app, tmp_path)
     app.include_router(router)
     return app
 
