@@ -27,7 +27,7 @@ jobs:
           STT_COMPUTE: int8
       - run: ruff check app tests
       - run: ruff format --check app tests
-      - run: mypy app
+      - run: mypy app --python-version ${{ matrix.python }}
 
   docker-build:
     runs-on: ubuntu-latest
