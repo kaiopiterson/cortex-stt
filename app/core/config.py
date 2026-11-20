@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     registry_path: str = "/data/registry.sqlite3"
     environment: Literal["development", "staging", "production"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    admin_key: SecretStr | None = None
     api_key: SecretStr
     rate_limit: str = "60/minute"
     trust_proxy_headers: bool = False
@@ -87,6 +88,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_configuration(self):
+        if self.admin_key is not None:
+            secret = self.admin_key.get_secret_value()
+            if len(secret) < 32 or secret == self.api_key.get_secret_value() or secret.startswith(('stt_', 'tok_')):
+                raise ValueError('STT_ADMIN_KEY must be independent and at least 32 characters')
         if self.device == "cpu" and self.compute in {"float16", "int8_float16"}:
             raise ValueError("Selected compute type requires a compatible accelerator")
         if self.stream_overlap_seconds >= self.stream_window_seconds:

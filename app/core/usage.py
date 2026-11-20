@@ -20,6 +20,18 @@ class UsageStore:
                 amount INTEGER NOT NULL, PRIMARY KEY(app_id, period, bucket)
             )""")
 
+    def report(self, limit: int = 100) -> list[dict]:
+        with closing(self.registry.connect()) as db:
+            rows = db.execute(
+                """SELECT app_id,period,bucket,amount FROM usage_buckets
+                ORDER BY bucket DESC,app_id,period LIMIT ?""", (limit,)
+            ).fetchall()
+        return [
+            {"app_id": row[0], "period": row[1], "bucket": row[2],
+             "amount": row[3], "unit": "requests" if row[1] == "minute" else "samples"}
+            for row in rows
+        ]
+
     def charge(
         self, app_id: str, requests: int, samples: int,
         rpm: int, daily_samples: int, monthly_samples: int,
