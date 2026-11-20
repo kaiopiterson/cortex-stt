@@ -10,6 +10,7 @@ from app.api import api_router
 from app.core.body_limit import BodyLimit
 from app.core.config import get_settings
 from app.core.registry import AppRegistry
+from app.core.usage import AppSlots, UsageStore
 from app.core.limiter import limiter
 from app.services.inference import InferenceService
 
@@ -28,6 +29,9 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.registry = AppRegistry(settings.registry_path)
     await asyncio.to_thread(app.state.registry.initialize)
+    app.state.usage = UsageStore(app.state.registry)
+    await asyncio.to_thread(app.state.usage.initialize)
+    app.state.app_slots = AppSlots()
     app.state.inference_service = inference_service
     app.state.stream_slots = asyncio.Semaphore(settings.stream_sessions or settings.sessions)
     app.state.rest_slots = asyncio.Semaphore(settings.rest_concurrency)

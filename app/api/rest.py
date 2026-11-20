@@ -11,6 +11,8 @@ from fastapi.responses import HTMLResponse
 from app.api.common import (SettingsDependency, InferenceDependency, Authenticated,
                             acquire_session, processing_metadata, valid_language, parse_hotwords)
 from app.core.limiter import configured_limit, limiter
+from app.core.governance import charge, registered, slots
+from app.core.usage import UsageLimit
 from app.services.inference import (AudioDurationError, InvalidAudioError, InferenceBusyError,
                                     ModelNotReadyError, ModelExecutionError)
 
@@ -70,7 +72,12 @@ async def transcribe_audio(request: Request, response: Response, settings: Setti
         raise HTTPException(415, "Unsupported audio content type")
     semaphore = request.app.state.rest_slots
     acquired = False
+    identity = getattr(request.state, 'app_identity', None)
+    app_acquired = False
     try:
+        if identity is not None and registered(identity):
+            slots(request).acquire(identity, settings.app_concurrency)
+            app_acquired = True
         await acquire_session(semaphore, settings.inference_queue_timeout_seconds)
         acquired = True
         started = monotonic()
@@ -79,12 +86,21 @@ async def transcribe_audio(request: Request, response: Response, settings: Setti
             raise HTTPException(422, "Empty audio file")
         if len(audio) > settings.max_upload_bytes:
             raise HTTPException(413, "Maximum upload size exceeded")
-        result = await inference.transcribe(audio=BytesIO(audio), language=language, initial_prompt=prompt, priority=0 if mode == "command" else 1, hotwords=hints)
+        prepared = BytesIO(audio)
+        if app_acquired:
+            samples = await asyncio.to_thread(inference._prepare_audio, prepared)
+            await charge(request, identity, samples=int(samples.size))
+            prepared_audio = samples
+        else:
+            prepared_audio = prepared
+        result = await inference.transcribe(audio=prepared_audio, language=language, initial_prompt=prompt, priority=0 if mode == "command" else 1, hotwords=hints)
         payload = result.to_dict()
         payload["needs_review"] = not result.text.strip() or result.confidence < settings.review_threshold
         payload["total_ms"] = round((monotonic() - started) * 1000, 2)
         payload["processing"] = processing_metadata(settings)
         return payload
+    except UsageLimit as exc:
+        raise HTTPException(429, 'Application usage limit exceeded') from exc
     except AudioDurationError as exc:
         raise HTTPException(413, "Maximum audio duration exceeded") from exc
     except InvalidAudioError as exc:
@@ -99,5 +115,7 @@ async def transcribe_audio(request: Request, response: Response, settings: Setti
     finally:
         if acquired:
             semaphore.release()
+        if app_acquired and identity is not None:
+            slots(request).release(identity)
         await file.close()
 

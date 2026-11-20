@@ -5,6 +5,8 @@ from typing import Annotated
 from fastapi import Depends, Header, HTTPException, Request
 from app.core.config import Settings
 from app.core.auth import identify_client
+from app.core.governance import charge
+from app.core.usage import UsageLimit
 from app.services.inference import InferenceService, InferenceBusyError
 
 def get_settings_from_state(request: Request) -> Settings:
@@ -27,9 +29,16 @@ def validate_api_key(supplied_key: str | None, settings: Settings) -> bool:
 async def require_api_key(request: Request,
                     authorization: Annotated[str | None, Header()] = None) -> None:
     scheme, separator, token = (authorization or "").partition(" ")
-    if not separator or scheme.lower() != "bearer" or not await identify_client(request, token):
+    identity = await identify_client(request, token) if separator and scheme.lower() == "bearer" else None
+    if identity is None:
         raise HTTPException(401, "Invalid API credentials" if authorization else "Missing API credentials",
                             headers={"WWW-Authenticate": "Bearer"})
+
+    request.state.app_identity = identity
+    try:
+        await charge(request, identity, requests=1)
+    except UsageLimit as exc:
+        raise HTTPException(429, "Application usage limit exceeded") from exc
 
 
 Authenticated = Annotated[None, Depends(require_api_key)]
