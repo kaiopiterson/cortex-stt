@@ -5,3 +5,5 @@ python-multipart==0.0.20
 numpy<2
 httpx
 websockets
+slowapi==0.1.9
+pydantic-settings>=2.8,<3
