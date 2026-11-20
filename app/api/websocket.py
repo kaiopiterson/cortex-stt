@@ -18,6 +18,7 @@ router = APIRouter()
 class StreamingSession:
     settings: Settings
     language: str = "pt"
+    mode: str = "stream"
     buffer: bytearray = field(default_factory=bytearray)
     committed_words: list[TranscriptionWord] = field(default_factory=list)
     provisional_words: list[TranscriptionWord] = field(default_factory=list)
@@ -26,6 +27,13 @@ class StreamingSession:
     last_inference_samples: int = 0
     committed_until_seconds: float = 0.0
     revision: int = 0
+
+    @property
+    def duration_limit(self) -> int:
+        if self.mode == "utterance":
+            return min(self.settings.utterance_max_seconds,
+                       self.settings.max_audio_duration_seconds)
+        return self.settings.stream_max_duration_seconds
 
     @property
     def buffered_samples(self) -> int:
@@ -64,7 +72,7 @@ class StreamingSession:
         if len(chunk) % self.settings.sample_width_bytes:
             raise InvalidAudioError("Invalid PCM sample alignment")
         count = len(chunk) // self.settings.sample_width_bytes
-        if self.total_received_samples + count > self.settings.stream_max_duration_seconds * self.settings.sample_rate:
+        if self.total_received_samples + count > self.duration_limit * self.settings.sample_rate:
             raise AudioDurationError("Maximum streaming duration exceeded")
         self.buffer.extend(chunk)
         self.total_received_samples += count
@@ -186,6 +194,16 @@ async def advance_stream(session: StreamingSession, inference: InferenceService)
 
 
 async def finalize_stream(session: StreamingSession, inference: InferenceService) -> TranscriptionResult | None:
+    if session.mode == "utterance":
+        if not session.buffered_samples:
+            return None
+        result = await inference.transcribe(
+            audio=session.get_pcm(), language=session.language, word_timestamps=True
+        )
+        session.language = result.language
+        session.apply_result(result, session.total_received_samples,
+                             session.total_received_samples, final=True)
+        return result
     await advance_stream(session, inference)
     if session.buffered_samples == 0:
         session.provisional_words.clear()
@@ -258,6 +276,10 @@ async def stream_audio(websocket: WebSocket) -> None:
                 or config.get("channels", settings.channels) != settings.channels):
             await websocket_error(websocket, "unsupported_audio_format", "Expected PCM signed 16-bit little-endian, 16 kHz, mono", 1003)
             return
+        mode = config.get("mode", "stream")
+        if mode not in ("stream", "utterance"):
+            await websocket_error(websocket, "invalid_mode", "Invalid transcription mode", 1008)
+            return
         key = stream_client_key(websocket, api_key)
         counts = getattr(websocket.app.state, "stream_key_counts", None)
         if counts is None:
@@ -270,14 +292,14 @@ async def stream_audio(websocket: WebSocket) -> None:
         key_slot = key
         await acquire_session(semaphore, 0.2)
         acquired = True
-        session = StreamingSession(settings=settings, language=language.lower())
+        session = StreamingSession(settings=settings, language=language.lower(), mode=mode)
         started = monotonic()
         await websocket.send_json({
             "type": "ready", "version": settings.app_version, "protocol_version": "1.1",
             "sample_rate": settings.sample_rate, "channels": settings.channels, "format": "pcm_s16le",
             "window_seconds": settings.stream_window_seconds, "step_seconds": settings.stream_step_seconds,
             "confirmation_margin_seconds": settings.stream_overlap_seconds,
-            "max_duration_seconds": settings.stream_max_duration_seconds,
+            "max_duration_seconds": session.duration_limit, "mode": mode,
             "processing": processing_metadata(settings),
         })
         queue = asyncio.Queue(maxsize=settings.stream_queue_size)
@@ -292,7 +314,7 @@ async def stream_audio(websocket: WebSocket) -> None:
         receiver = asyncio.create_task(receive_frames())
         busy_failures = 0
         while True:
-            remaining = settings.stream_max_duration_seconds - (monotonic() - started)
+            remaining = session.duration_limit - (monotonic() - started)
             if remaining <= 0:
                 result = await finalize_stream(session, inference)
                 payload = session.event_payload("final", result)
@@ -305,7 +327,7 @@ async def stream_audio(websocket: WebSocket) -> None:
             except asyncio.TimeoutError:
                 result = await finalize_stream(session, inference)
                 payload = session.event_payload("final", result)
-                payload["reason"] = "session_duration_limit" if monotonic() - started >= settings.stream_max_duration_seconds else "idle_timeout"
+                payload["reason"] = "session_duration_limit" if monotonic() - started >= session.duration_limit else "idle_timeout"
                 await websocket.send_json(payload)
                 await websocket.close(code=1000)
                 return
@@ -327,6 +349,8 @@ async def stream_audio(websocket: WebSocket) -> None:
             if not chunk:
                 continue
             session.append_audio(chunk)
+            if session.mode == "utterance":
+                continue
             # Retain all audio within the next window; apply backpressure rather
             # than silently dropping speech when the receiver falls behind.
             try:

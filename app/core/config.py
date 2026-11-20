@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     stream_idle_timeout_seconds: int = Field(default=20, ge=5, le=300)
     stream_max_chunk_bytes: int = Field(default=320000, ge=320, le=1048576)
     stream_auth_timeout_seconds: int = Field(default=5, ge=1, le=30)
+    utterance_max_seconds: int = Field(default=15, ge=1, le=60)
     stream_busy_failures: int = Field(default=3, ge=1, le=20)
     stream_queue_size: int = Field(default=8, ge=1, le=64)
     vad_enabled: bool = True
