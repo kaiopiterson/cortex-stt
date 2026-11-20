@@ -1,4 +1,266 @@
-<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>CortexLab STT</title><style>body{font:16px system-ui;max-width:720px;margin:60px auto;padding:20px;background:#111827;color:#eee}input,button,textarea{font:inherit;padding:12px;margin:6px 0;border-radius:8px}textarea{width:95%;height:200px}button{cursor:pointer}</style><h1>CortexLab STT</h1><p>Transcrição local · teste de microfone ou arquivo</p><input id="key" type="password" placeholder="Chave da API"><br><input id="file" type="file" accept="audio/*"><button id="upload">Transcrever arquivo</button><br><button id="start">Gravar ao vivo</button><button id="stop" disabled>Finalizar</button><p id="status"></p><textarea id="out" placeholder="Transcrição"></textarea><script>
-let ws,ctx,mic,node,source,t0;const $=id=>document.getElementById(id);function status(s){$('status').textContent=s} $('upload').onclick=async()=>{try{let f=new FormData();f.append('file',$('file').files[0]);let t=performance.now();let r=await fetch('/v1/audio/transcriptions',{method:'POST',headers:{Authorization:'Bearer '+$('key').value},body:f});if(!r.ok)throw Error(await r.text());$('out').value=(await r.json()).text;status(Math.round(performance.now()-t)+' ms')}catch(e){status(e.message)}};
-function cleanup(){if(node)node.disconnect();if(source)source.disconnect();if(mic)mic.getTracks().forEach(t=>t.stop());if(ctx&&ctx.state!=='closed')ctx.close();$('start').disabled=false;$('stop').disabled=true}
-$('start').onclick=async()=>{try{$('start').disabled=true;mic=await navigator.mediaDevices.getUserMedia({audio:true});ctx=new AudioContext({sampleRate:16000});if(ctx.sampleRate!==16000)throw Error('Taxa de áudio não suportada');ws=new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/v1/audio/stream');ws.onopen=()=>ws.send(JSON.stringify({api_key:$('key').value,language:'pt'}));ws.onmessage=e=>{let r=JSON.parse(e.data);if(r.type==='ready'){source=ctx.createMediaStreamSource(mic);node=ctx.createScriptProcessor(4096,1,1);node.onaudioprocess=e=>{if(ws.readyState!==1)return;if(ws.bufferedAmount>256000){status('Conexão congestionada');ws.close();return}let x=e.inputBuffer.getChannelData(0),p=new Int16Array(x.length);for(let i=0;i<x.length;i++)p[i]=Math.max(-1,Math.min(1,x[i]))*32767;ws.send(p.buffer)};source.connect(node);node.connect(ctx.destination);$('stop').disabled=false;t0=performance.now();status('Gravando');}else{$('out').value=r.text;status(r.type+' · '+Math.round(performance.now()-t0)+' ms desde início')}};ws.onclose=()=>cleanup();ws.onerror=()=>{status('Erro de conexão');cleanup()}}catch(e){status(e.message);cleanup()}};$('stop').onclick=()=>{if(node)node.disconnect();if(mic)mic.getTracks().forEach(t=>t.stop());$('stop').disabled=true;if(ws?.readyState===1)ws.send('finish')};</script></html>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CortexLab STT</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #101821;
+      color: #edf5fa;
+      font: 16px/1.5 system-ui, sans-serif;
+    }
+    main { max-width: 760px; margin: 0 auto; padding: 32px 20px; }
+    h1 { font-size: 26px; margin: 0 0 4px; }
+    p.lead { color: #b8c8d4; margin: 0 0 24px; }
+    section { background: #192633; border-radius: 12px; padding: 18px; margin-bottom: 16px; }
+    label { display: block; font-size: 14px; color: #b8c8d4; margin: 10px 0 4px; }
+    input, select, button, textarea {
+      font: inherit;
+      color: inherit;
+      background: #14202b;
+      border: 1px solid #52677a;
+      border-radius: 8px;
+      padding: 10px 12px;
+      max-width: 100%;
+    }
+    input[type="password"], select, textarea { width: 100%; }
+    button { cursor: pointer; margin: 8px 8px 0 0; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+      outline: 2px solid #52d6ba;
+      outline-offset: 2px;
+    }
+    textarea { min-height: 180px; resize: vertical; }
+    .confirmed { color: #edf5fa; }
+    .partial { color: #8fa3b3; font-style: italic; }
+    #transcript { min-height: 120px; white-space: pre-wrap; padding: 12px;
+                  background: #14202b; border-radius: 8px; border: 1px solid #344656; }
+    #status { color: #52d6ba; min-height: 1.5em; }
+    small { color: #8fa3b3; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>CortexLab STT</h1>
+  <p class="lead">Teste de transcrição por microfone (WebSocket) ou arquivo (REST).</p>
+
+  <section>
+    <label for="token">Token de acesso (tok_…) ou chave legada</label>
+    <input id="token" type="password" autocomplete="off" spellcheck="false">
+    <small>O token fica apenas na memória desta página. Não use a chave permanente stt_.</small>
+    <label for="language">Idioma</label>
+    <select id="language">
+      <option value="pt" selected>Português</option>
+      <option value="en">Inglês</option>
+      <option value="es">Espanhol</option>
+      <option value="auto">Detectar automaticamente</option>
+    </select>
+  </section>
+
+  <section aria-labelledby="live-title">
+    <h2 id="live-title">Microfone</h2>
+    <label for="mode">Modo</label>
+    <select id="mode">
+      <option value="stream" selected>Ditado contínuo (parciais em tempo real)</option>
+      <option value="utterance">Comando curto (uma inferência ao finalizar)</option>
+    </select>
+    <button id="start" type="button">Gravar</button>
+    <button id="stop" type="button" disabled>Finalizar</button>
+    <p id="status" role="status" aria-live="polite"></p>
+    <div id="transcript" aria-live="polite">
+      <span id="confirmed" class="confirmed"></span><span id="partial" class="partial"></span>
+    </div>
+  </section>
+
+  <section aria-labelledby="file-title">
+    <h2 id="file-title">Arquivo</h2>
+    <label for="file">Áudio</label>
+    <input id="file" type="file" accept="audio/*,video/*">
+    <button id="upload" type="button">Transcrever arquivo</button>
+    <label for="file-output">Resultado</label>
+    <textarea id="file-output" readonly></textarea>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+const TARGET_RATE = 16000;
+const CHUNK_SAMPLES = 4096;          // 256 ms at 16 kHz
+const MAX_BUFFERED_BYTES = 256 * 1024;
+
+const $ = (id) => document.getElementById(id);
+const setStatus = (text) => { $("status").textContent = text; };
+
+// AudioWorklet: averages input frames down to 16 kHz and posts Int16 chunks.
+const WORKLET_SOURCE = `
+class PcmDownsampler extends AudioWorkletProcessor {
+  constructor(options) {
+    super();
+    this.ratio = sampleRate / options.processorOptions.targetRate;
+    this.chunk = options.processorOptions.chunkSamples;
+    this.buffer = new Int16Array(this.chunk);
+    this.length = 0;
+    this.accumulator = 0;
+    this.count = 0;
+    this.position = 0;
+  }
+  process(inputs) {
+    const channel = inputs[0] && inputs[0][0];
+    if (!channel) return true;
+    for (let i = 0; i < channel.length; i++) {
+      this.accumulator += channel[i];
+      this.count += 1;
+      this.position += 1;
+      if (this.position >= this.ratio) {
+        this.position -= this.ratio;
+        const sample = Math.max(-1, Math.min(1, this.accumulator / this.count));
+        this.accumulator = 0;
+        this.count = 0;
+        this.buffer[this.length++] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+        if (this.length === this.chunk) {
+          this.port.postMessage(this.buffer.buffer, [this.buffer.buffer]);
+          this.buffer = new Int16Array(this.chunk);
+          this.length = 0;
+        }
+      }
+    }
+    return true;
+  }
+}
+registerProcessor("pcm-downsampler", PcmDownsampler);
+`;
+
+let socket = null;
+let context = null;
+let microphone = null;
+let workletNode = null;
+let sourceNode = null;
+let startedAt = 0;
+
+function cleanup() {
+  if (workletNode) { workletNode.port.onmessage = null; workletNode.disconnect(); }
+  if (sourceNode) sourceNode.disconnect();
+  if (microphone) microphone.getTracks().forEach((track) => track.stop());
+  if (context && context.state !== "closed") context.close();
+  workletNode = sourceNode = microphone = context = null;
+  $("start").disabled = false;
+  $("stop").disabled = true;
+}
+
+function showTranscript(event) {
+  $("confirmed").textContent = event.confirmed_text ?? event.text ?? "";
+  $("partial").textContent = event.partial_text ? " " + event.partial_text : "";
+}
+
+async function startCapture() {
+  microphone = await navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+  });
+  context = new AudioContext();
+  const moduleUrl = URL.createObjectURL(new Blob([WORKLET_SOURCE], { type: "text/javascript" }));
+  try {
+    await context.audioWorklet.addModule(moduleUrl);
+  } finally {
+    URL.revokeObjectURL(moduleUrl);
+  }
+  sourceNode = context.createMediaStreamSource(microphone);
+  workletNode = new AudioWorkletNode(context, "pcm-downsampler", {
+    processorOptions: { targetRate: TARGET_RATE, chunkSamples: CHUNK_SAMPLES },
+  });
+  workletNode.port.onmessage = (message) => {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    if (socket.bufferedAmount > MAX_BUFFERED_BYTES) {
+      setStatus("Conexão congestionada; encerrando.");
+      socket.close();
+      return;
+    }
+    socket.send(message.data);
+  };
+  sourceNode.connect(workletNode);
+}
+
+$("start").addEventListener("click", async () => {
+  $("start").disabled = true;
+  $("confirmed").textContent = "";
+  $("partial").textContent = "";
+  try {
+    const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+    socket = new WebSocket(`${scheme}//${location.host}/v1/audio/stream`);
+    socket.binaryType = "arraybuffer";
+    socket.onopen = () => {
+      socket.send(JSON.stringify({
+        api_key: $("token").value,
+        language: $("language").value,
+        mode: $("mode").value,
+        format: "pcm_s16le",
+        sample_rate: TARGET_RATE,
+        channels: 1,
+      }));
+    };
+    socket.onmessage = async (message) => {
+      const event = JSON.parse(message.data);
+      if (event.type === "ready") {
+        await startCapture();
+        startedAt = performance.now();
+        $("stop").disabled = false;
+        setStatus(event.mode === "utterance" ? "Gravando comando…" : "Gravando…");
+      } else if (event.type === "partial" || event.type === "final") {
+        showTranscript(event);
+        const elapsed = Math.round(performance.now() - startedAt);
+        const review = event.needs_review ? " · revisar" : "";
+        setStatus(`${event.type === "final" ? "Final" : "Parcial"} · ${elapsed} ms${review}`);
+      } else if (event.type === "warning") {
+        setStatus(`Aviso: ${event.code}`);
+      } else if (event.type === "error") {
+        setStatus(`Erro: ${event.code}`);
+      }
+    };
+    socket.onclose = cleanup;
+    socket.onerror = () => { setStatus("Erro de conexão."); cleanup(); };
+  } catch (error) {
+    setStatus(error.message);
+    cleanup();
+  }
+});
+
+$("stop").addEventListener("click", () => {
+  $("stop").disabled = true;
+  if (sourceNode) sourceNode.disconnect();
+  if (microphone) microphone.getTracks().forEach((track) => track.stop());
+  if (socket && socket.readyState === WebSocket.OPEN) socket.send("finish");
+  setStatus("Finalizando…");
+});
+
+$("upload").addEventListener("click", async () => {
+  const file = $("file").files[0];
+  if (!file) { $("file-output").value = "Selecione um arquivo."; return; }
+  const form = new FormData();
+  form.append("file", file);
+  form.append("language", $("language").value === "auto" ? "" : $("language").value);
+  const started = performance.now();
+  $("upload").disabled = true;
+  try {
+    const response = await fetch("/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${$("token").value}` },
+      body: form,
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
+    const elapsed = Math.round(performance.now() - started);
+    const review = body.needs_review ? " (revisar)" : "";
+    $("file-output").value = `${body.text}\n\n— ${elapsed} ms${review}`;
+  } catch (error) {
+    $("file-output").value = `Erro: ${error.message}`;
+  } finally {
+    $("upload").disabled = false;
+  }
+});
+</script>
+</body>
+</html>

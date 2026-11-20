@@ -1,4 +1,4 @@
-"""Isolated speech inference service for CortexLab STT v0.2.0."""
+"""Isolated speech inference service for CortexLab STT v0.3.0."""
 
 import asyncio
 import logging

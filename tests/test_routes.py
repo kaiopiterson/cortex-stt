@@ -169,3 +169,52 @@ def test_untrusted_proxy_header_ignored(application):
         }
     )
     assert request_key(request) == "ip:127.0.0.1"
+
+
+@pytest.mark.asyncio
+async def test_ready_checks_model_and_database(application):
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        ready = await client.get("/ready")
+        assert ready.status_code == 200
+        assert ready.json() == {"ready": True, "checks": {"model": True, "database": True}}
+        application.state.inference_service.is_ready = False
+        not_ready = await client.get("/ready")
+    assert not_ready.status_code == 503
+    assert not_ready.json()["checks"]["model"] is False
+
+
+@pytest.mark.asyncio
+async def test_ready_reports_database_outage(application, monkeypatch):
+    import sqlite3
+
+    def broken():
+        raise sqlite3.OperationalError("unable to open database file")
+
+    monkeypatch.setattr(application.state.registry, "schema_version", broken)
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/ready")
+    assert response.status_code == 503
+    assert response.json()["checks"]["database"] is False
+
+
+@pytest.mark.asyncio
+async def test_health_is_minimal_in_production(application):
+    application.state.settings = application.state.settings.model_copy(
+        update={"environment": "production"}
+    )
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/health")
+    assert response.json() == {"status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_web_interface_uses_audio_worklet(application):
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        page = (await client.get("/")).text
+    assert "AudioWorkletNode" in page
+    assert "createScriptProcessor" not in page
+    assert 'id="mode"' in page

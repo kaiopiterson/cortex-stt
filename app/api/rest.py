@@ -3,13 +3,14 @@
 import asyncio
 import json
 import logging
+import sqlite3
 from io import BytesIO
 from pathlib import Path
 from time import monotonic
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from app.api.common import (
     Authenticated,
     InferenceDependency,
@@ -52,13 +53,36 @@ async def web_interface() -> HTMLResponse:
 
 @router.get("/health", tags=["Health"])
 async def health(settings: SettingsDependency, inference: InferenceDependency) -> dict:
+    """Liveness. In production it reveals no version, model or device."""
+    status = "ok" if inference.is_ready else "initializing"
+    if settings.environment == "production":
+        return {"status": status}
     return {
-        "status": "ok" if inference.is_ready else "initializing",
+        "status": status,
         "ready": inference.is_ready,
         "version": settings.app_version,
         "model": settings.model,
         "device": settings.device,
     }
+
+
+@router.get("/ready", tags=["Health"])
+async def ready(request: Request, inference: InferenceDependency) -> JSONResponse:
+    """Readiness: model loaded and gateway database reachable (used by HEALTHCHECK)."""
+    checks = {"model": bool(inference.is_ready), "database": False}
+    registry = getattr(request.app.state, "registry", None)
+    if registry is not None:
+        try:
+            await asyncio.to_thread(registry.schema_version)
+            checks["database"] = True
+        except sqlite3.Error:
+            logger.warning("Readiness check: database unavailable")
+    is_ready = all(checks.values())
+    return JSONResponse(
+        {"ready": is_ready, "checks": checks},
+        status_code=200 if is_ready else 503,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/v1/models", tags=["Models"])
