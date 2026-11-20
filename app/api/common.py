@@ -34,9 +34,11 @@ async def require_api_key(request: Request,
         raise HTTPException(401, "Invalid API credentials" if authorization else "Missing API credentials",
                             headers={"WWW-Authenticate": "Bearer"})
 
-    request.state.app_identity = identity
+    if identity.kind == 'permanent':
+        raise HTTPException(403, 'Forbidden credential scope')
+    request.state.app_identity = identity.app_id
     try:
-        await charge(request, identity, requests=1)
+        await charge(request, identity.app_id, requests=1)
     except UsageLimit as exc:
         raise HTTPException(429, "Application usage limit exceeded") from exc
 

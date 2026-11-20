@@ -290,6 +290,10 @@ async def stream_audio(websocket: WebSocket) -> None:
         if identity is None:
             await websocket_error(websocket, "unauthorized", "Invalid API credentials", 1008)
             return
+        if identity.kind == "permanent":
+            await websocket_error(websocket, "forbidden_scope", "Forbidden credential scope", 1008)
+            return
+        identity = identity.app_id
         if not inference.is_ready:
             await websocket_error(websocket, "model_not_ready", "Inference model is not ready", 1013)
             return
@@ -350,7 +354,8 @@ async def stream_audio(websocket: WebSocket) -> None:
         busy_failures = 0
         deferred = None
         async def authorized():
-            if await identify_client(websocket, api_key) != identity:
+            current = await identify_client(websocket, api_key)
+            if current is None or current.app_id != identity:
                 await websocket_error(websocket, "unauthorized", "Invalid API credentials", 1008)
                 return False
             return True

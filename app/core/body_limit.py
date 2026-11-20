@@ -41,6 +41,9 @@ class BodyLimit:
             )
             await response(scope, receive, send)
             return
+        if path == "/v1/audio/transcriptions" and token.startswith("stt_"):
+            await JSONResponse({"detail": "Forbidden credential scope"}, status_code=403)(scope, receive, send)
+            return
         limit = settings.max_upload_bytes + 65536 if path == "/v1/audio/transcriptions" else 65536
         headers = dict(scope["headers"])
         try:
