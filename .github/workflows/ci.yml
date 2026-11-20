@@ -10,17 +10,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.10', '3.11']
+        python: ['3.11', '3.12']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
           cache: pip
-          cache-dependency-path: |
-            requirements.txt
-            requirements-dev.txt
-      - run: "python -m pip install --only-binary=:all: -r requirements-dev.txt"
+          cache-dependency-path: requirements-dev.lock
+      - run: "python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock"
       - run: python -m pip check
       - run: python -m pytest
         env:
@@ -45,13 +43,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m pip install pip-tools pip-audit
-      - run: pip-compile --generate-hashes --output-file=requirements.lock requirements.txt
-      - run: pip-compile --generate-hashes --output-file=requirements-dev.lock requirements-dev.txt
-      - run: pip-audit -r requirements.lock --require-hashes
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dependency-locks
-          path: |
-            requirements.lock
-            requirements-dev.lock
+      - run: python -m pip install pip-audit==2.10.1 uv==0.11.32
+      - name: Locks match the declared dependencies
+        run: |
+          cp requirements.lock requirements-dev.lock /tmp/
+          uv pip compile --universal --python-version 3.11 --generate-hashes --only-binary :all: --no-header -o /tmp/requirements.lock requirements.txt
+          uv pip compile --universal --python-version 3.11 --generate-hashes --only-binary :all: --no-header -o /tmp/requirements-dev.lock requirements-dev.txt
+          diff -u requirements.lock /tmp/requirements.lock
+          diff -u requirements-dev.lock /tmp/requirements-dev.lock
+      - run: pip-audit -r requirements.lock --require-hashes --progress-spinner off

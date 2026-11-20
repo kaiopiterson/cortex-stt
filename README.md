@@ -27,6 +27,8 @@ Cotas por identidade, SQLite WAL, um worker Uvicorn.
 Veja docs/dashboard.md, docs/observability.md e docs/release-v0.3.md.
 
 ## Validação
-Instale requirements-dev.txt com --only-binary=:all:; execute pip check,
-pytest, ruff check app tests, ruff format --check app tests, mypy app.
+Python 3.11+. Instale com
+`python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock`
+e execute pip check, pytest, ruff check app tests, ruff format --check app tests,
+mypy app e pip-audit -r requirements.lock --require-hashes. Veja docs/dependencies.md.
 CI e benchmark GPU são gates de release, não resultados presumidos.
