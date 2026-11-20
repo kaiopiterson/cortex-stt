@@ -99,3 +99,16 @@ def test_metrics_token_must_be_independent():
         Settings(api_key="x" * 40, metrics_token="short", device="cpu")
     with pytest.raises(ValidationError):
         Settings(api_key="x" * 40, admin_allowed_networks=["not-a-network"], device="cpu")
+
+
+def test_tunnel_traffic_without_trusted_proxy_is_external(tmp_path):
+    """Without compose.tunnel.yaml the socket peer is cloudflared (a private IP)."""
+    app, _ = build(tmp_path, admin_key=ADMIN, trust_proxy_headers=False)
+    via_tunnel = {"CF-Connecting-IP": "10.0.0.5"}
+    with TestClient(app) as client:
+        assert client.get("/admin", headers=via_tunnel).status_code == 404
+        assert (
+            client.get("/v1/admin/apps", headers={**via_tunnel, **headers(ADMIN)}).status_code
+            == 404
+        )
+        assert client.get("/admin").status_code == 200

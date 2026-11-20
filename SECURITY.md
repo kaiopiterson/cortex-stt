@@ -22,6 +22,7 @@ Cotas agregadas persistem em SQLite; proteja volume e backups.
 Mutações administrativas ficam em admin_audit (retenção de 400 dias).
 Prometheus usa STT_METRICS_TOKEN, sem poderes administrativos.
 Admin e métricas só respondem a STT_ADMIN_ALLOWED_NETWORKS; atrás do túnel,
-com STT_TRUST_PROXY_HEADERS, o IP considerado é o do visitante.
+com STT_TRUST_PROXY_HEADERS, o IP considerado é o do visitante. Sem confiar no
+proxy, qualquer requisição com CF-Connecting-IP é tratada como externa.
 Não exponha publicamente antes de validar CI, dependências e carga.
 Reporte vulnerabilidades privadamente ao mantenedor.
