@@ -1,14 +1,16 @@
-"""Shared API dependencies and helpers."""
+"""Shared API dependencies and helpers (CortexLab STT v0.3.0)."""
 
 import asyncio
 import secrets
 from typing import Annotated
+
 from fastapi import Depends, Header, HTTPException, Request
+
+from app.core.auth import CredentialStoreUnavailable, Identity, identify_client
 from app.core.config import Settings
-from app.core.auth import identify_client
-from app.core.governance import charge
-from app.core.usage import UsageLimit
-from app.services.inference import InferenceService, InferenceBusyError
+from app.core.gateway import Admission, gateway
+from app.core.usage import UsageLimit, scope_key
+from app.services.inference import InferenceBusyError, InferenceService
 
 
 def get_settings_from_state(request: Request) -> Settings:
@@ -32,30 +34,52 @@ def validate_api_key(supplied_key: str | None, settings: Settings) -> bool:
     )
 
 
+def unavailable() -> HTTPException:
+    return HTTPException(503, "Service temporarily unavailable", headers={"Retry-After": "2"})
+
+
+async def resolve_identity(request: Request, authorization: str | None) -> Identity | None:
+    """Return the identity resolved by BodyLimit for this request, or resolve it now."""
+    cached = getattr(request.state, "identity", None)
+    if isinstance(cached, Identity):
+        return cached
+    scheme, separator, token = (authorization or "").partition(" ")
+    if not separator or scheme.lower() != "bearer":
+        return None
+    try:
+        identity = await identify_client(request, token)
+    except CredentialStoreUnavailable as exc:
+        raise unavailable() from exc
+    request.state.identity = identity
+    return identity
+
+
 async def require_api_key(
     request: Request, authorization: Annotated[str | None, Header()] = None
 ) -> None:
-    scheme, separator, token = (authorization or "").partition(" ")
-    identity = (
-        await identify_client(request, token) if separator and scheme.lower() == "bearer" else None
-    )
+    identity = await resolve_identity(request, authorization)
     if identity is None:
         raise HTTPException(
             401,
             "Invalid API credentials" if authorization else "Missing API credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
     if identity.kind == "permanent":
         raise HTTPException(403, "Forbidden credential scope")
-    request.state.app_identity = identity.app_id
+    request.state.app_identity = scope_key(identity.app_id, identity.subject)
     try:
-        await charge(request, identity.app_id, requests=1)
+        request.state.admission = await gateway(request).admit(identity, hold_slot=False)
     except UsageLimit as exc:
         raise HTTPException(429, "Application usage limit exceeded") from exc
+    except CredentialStoreUnavailable as exc:
+        raise unavailable() from exc
 
 
 Authenticated = Annotated[None, Depends(require_api_key)]
+
+
+def current_admission(request: Request) -> Admission:
+    return request.state.admission
 
 
 def processing_metadata(settings: Settings) -> dict:

@@ -4,7 +4,7 @@ from test_audit_regressions import build
 
 
 def test_token_limits_isolate_apps_and_proxy_failures(tmp_path):
-    app, registry = build(tmp_path, trust_proxy_headers=True)
+    app, registry = build(tmp_path, trust_proxy_headers=True, token_issuance_per_minute=30)
     _, first = registry.register("first")
     _, second = registry.register("second")
     with TestClient(app) as client:

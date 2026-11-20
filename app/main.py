@@ -1,4 +1,4 @@
-"""CortexLab STT v0.2.0 — application orchestration."""
+"""CortexLab STT v0.3.0 — application orchestration."""
 
 import asyncio
 import logging
@@ -13,11 +13,22 @@ from app.api import build_router
 from app.core.body_limit import BodyLimit
 from app.core.config import get_settings
 from app.core.registry import AppRegistry
-from app.core.usage import AppSlots, UsageStore
+from app.core.auth import IdentityCache
+from app.core.gateway import Gateway
+from app.core.usage import AppSlots, UsageLedger, UsageStore
 from app.core.limiter import limiter
 from app.services.inference import InferenceService
 
 logger = logging.getLogger(__name__)
+
+
+async def maintenance_loop(app: FastAPI) -> None:
+    """Persist usage in batches; the database stays off the request hot path."""
+    settings = app.state.settings
+    while True:
+        await asyncio.sleep(settings.usage_flush_seconds)
+        await app.state.ledger.flush()
+        app.state.ledger.forget_stale()
 
 
 @asynccontextmanager
@@ -35,11 +46,15 @@ async def lifespan(app: FastAPI):
     app.state.usage = UsageStore(app.state.registry)
     await asyncio.to_thread(app.state.usage.initialize)
     app.state.app_slots = AppSlots()
+    app.state.ledger = UsageLedger(app.state.usage)
+    app.state.identity_cache = IdentityCache()
+    app.state.gateway = Gateway(settings, app.state.registry, app.state.ledger, app.state.app_slots)
     app.state.inference_service = inference_service
     app.state.stream_slots = asyncio.Semaphore(settings.stream_sessions or settings.sessions)
     app.state.rest_slots = asyncio.Semaphore(settings.rest_concurrency)
     app.state.limiter = limiter
 
+    maintenance = asyncio.create_task(maintenance_loop(app), name="stt-maintenance")
     try:
         await inference_service.initialize()
         logger.info(
@@ -52,6 +67,9 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         logger.info("Stopping CortexLab STT")
+        maintenance.cancel()
+        await asyncio.gather(maintenance, return_exceptions=True)
+        await app.state.ledger.flush()
         await inference_service.close()
         logger.info("CortexLab STT stopped")
 

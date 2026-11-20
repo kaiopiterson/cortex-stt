@@ -1,6 +1,7 @@
-"""Centralized application configuration for CortexLab STT v0.2.0."""
+"""Centralized application configuration for CortexLab STT v0.3.0."""
 
 from functools import lru_cache
+from ipaddress import ip_network
 from typing import Literal
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -17,17 +18,41 @@ class Settings(BaseSettings):
     )
     app_name: str = "CortexLab STT"
     app_version: str = "0.3.0"
-    app_requests_per_minute: int = Field(default=60, ge=1)
-    app_daily_audio_seconds: int = Field(default=3600, ge=1)
-    app_monthly_audio_seconds: int = Field(default=36000, ge=1)
-    app_concurrency: int = Field(default=2, ge=1)
+    # Default limits for a whole application (overridable per app in the registry).
+    app_requests_per_minute: int = Field(default=600, ge=1)
+    app_daily_audio_seconds: int = Field(default=36000, ge=1)
+    app_monthly_audio_seconds: int = Field(default=720000, ge=1)
+    app_concurrency: int = Field(default=8, ge=1)
+    # Limits for each token subject (end user or device) inside an application.
+    subject_requests_per_minute: int = Field(default=60, ge=1)
+    subject_daily_audio_seconds: int = Field(default=3600, ge=1)
+    subject_monthly_audio_seconds: int = Field(default=36000, ge=1)
+    subject_concurrency: int = Field(default=2, ge=1)
+    token_issuance_per_minute: int = Field(default=600, ge=1)
+    token_failures_per_minute: int = Field(default=30, ge=1)
+    usage_flush_seconds: float = Field(default=2.0, gt=0, le=60)
+    retention_minute_days: int = Field(default=2, ge=1)
+    retention_day_days: int = Field(default=400, ge=1)
+    retention_audit_days: int = Field(default=400, ge=1)
+    maintenance_interval_seconds: int = Field(default=3600, ge=60)
     registry_path: str = "/data/registry.sqlite3"
     environment: Literal["development", "staging", "production"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     admin_key: SecretStr | None = None
+    metrics_token: SecretStr | None = None
+    admin_allowed_networks: list[str] = Field(
+        default_factory=lambda: [
+            "127.0.0.0/8",
+            "::1/128",
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16",
+        ]
+    )
+    log_format: Literal["json", "text"] = "json"
     legacy_api_key_enabled: bool | None = None
     api_key: SecretStr
-    rate_limit: str = "60/minute"
+    rate_limit: str = "600/minute"
     trust_proxy_headers: bool = False
     stream_connections_per_key: int = Field(default=4, ge=1, le=100)
     model: str = "small"
@@ -37,7 +62,23 @@ class Settings(BaseSettings):
     language: str = "pt"
     model_cache_dir: str = "/models"
     cpu_threads: int = Field(default=4, ge=1, le=64)
-    workers: int = Field(default=2, ge=1, le=16)
+    workers: int = Field(default=1, ge=1, le=16)
+    cpu_fallback: bool = True
+    hallucination_filter: bool = True
+    hallucination_no_speech_threshold: float = Field(default=0.6, ge=0, le=1)
+    hallucination_logprob_threshold: float = Field(default=-1.0, le=0)
+    hallucination_blocklist: list[str] = Field(
+        default_factory=lambda: [
+            "legendas pela comunidade amara.org",
+            "legenda por",
+            "legendado por",
+            "obrigado por assistir",
+            "obrigada por assistir",
+            "inscreva-se no canal",
+            "se inscreva no canal",
+            "não esqueça de se inscrever",
+        ]
+    )
     beam_size: int = Field(default=1, ge=1, le=10)
     sessions: int = Field(default=10, ge=1, le=100)
     stream_sessions: int | None = Field(default=None, ge=1, le=100)
@@ -100,6 +141,15 @@ class Settings(BaseSettings):
     def validate_configuration(self):
         if self.legacy_api_key_enabled is None:
             object.__setattr__(self, "legacy_api_key_enabled", self.environment != "production")
+        if self.metrics_token is not None:
+            token = self.metrics_token.get_secret_value()
+            others = {self.api_key.get_secret_value()}
+            if self.admin_key is not None:
+                others.add(self.admin_key.get_secret_value())
+            if len(token) < 32 or token in others or token.startswith(("stt_", "tok_")):
+                raise ValueError("STT_METRICS_TOKEN must be independent and at least 32 characters")
+        for network in self.admin_allowed_networks:
+            ip_network(network, strict=False)
         if self.admin_key is not None:
             secret = self.admin_key.get_secret_value()
             if (

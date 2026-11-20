@@ -1,6 +1,6 @@
-"""Limit upload bodies before multipart parsing."""
+"""Authenticate and bound request bodies before parsing (CortexLab STT v0.3.0)."""
 
-from app.core.auth import identify_client
+from app.core.auth import CredentialStoreUnavailable, identify_client
 from app.api.admin import require_admin
 from starlette.requests import Request
 from limits import parse
@@ -35,9 +35,20 @@ class BodyLimit:
                 return
         connection = HTTPConnection(scope)
         scheme, _, token = connection.headers.get("Authorization", "").partition(" ")
-        if path == "/v1/audio/transcriptions" and (
-            scheme.lower() != "bearer" or not await identify_client(connection, token)
-        ):
+        identity = None
+        if path == "/v1/audio/transcriptions" and scheme.lower() == "bearer":
+            try:
+                identity = await identify_client(connection, token)
+            except CredentialStoreUnavailable:
+                await JSONResponse(
+                    {"detail": "Service temporarily unavailable"},
+                    status_code=503,
+                    headers={"Retry-After": "2"},
+                )(scope, receive, send)
+                return
+            # Reused by the route dependency: one credential lookup per request.
+            connection.state.identity = identity
+        if path == "/v1/audio/transcriptions" and identity is None:
             allowed = self.unauthorized.hit(parse("60/minute"), client_ip(connection))
             response = JSONResponse(
                 {"detail": "Invalid API credentials" if allowed else "Rate limit exceeded"},

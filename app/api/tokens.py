@@ -1,6 +1,7 @@
 """Exchange backend application credentials for short-lived access tokens."""
 
 import asyncio
+import sqlite3
 from typing import Annotated
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
@@ -35,7 +36,8 @@ async def issue_token(
         state.token_limits = FixedWindowRateLimiter(MemoryStorage())
     limits = state.token_limits
     ip = token_rate_key(request)
-    failure_limit = parse("30/minute")
+    settings = state.settings
+    failure_limit = parse(f"{settings.token_failures_per_minute}/minute")
     if not limits.test(failure_limit, "failure", ip):
         raise HTTPException(429, "Rate limit exceeded", headers={"Retry-After": "60"})
     scheme, _, key = (authorization or "").partition(" ")
@@ -47,15 +49,25 @@ async def issue_token(
         and key.startswith("stt_")
         and len(key) == 47
     ):
-        app_id = await asyncio.to_thread(registry.identify, key)
+        try:
+            app_id = await asyncio.to_thread(registry.identify, key)
+        except sqlite3.Error as exc:
+            raise HTTPException(
+                503, "Service temporarily unavailable", headers={"Retry-After": "2"}
+            ) from exc
     if registry is None or app_id is None:
         limits.hit(failure_limit, "failure", ip)
         raise HTTPException(401, "Invalid API credentials", headers={"WWW-Authenticate": "Bearer"})
-    if not limits.hit(parse("30/minute"), "issuance", app_id):
+    if not limits.hit(parse(f"{settings.token_issuance_per_minute}/minute"), "issuance", app_id):
         raise HTTPException(429, "Rate limit exceeded", headers={"Retry-After": "60"})
-    result = await asyncio.to_thread(
-        registry.issue_token, key, subject=body.subject if body else None
-    )
+    try:
+        result = await asyncio.to_thread(
+            registry.issue_token, key, subject=body.subject if body else None
+        )
+    except sqlite3.Error as exc:
+        raise HTTPException(
+            503, "Service temporarily unavailable", headers={"Retry-After": "2"}
+        ) from exc
     if result is None:
         raise HTTPException(401, "Invalid API credentials", headers={"WWW-Authenticate": "Bearer"})
     token, ttl = result

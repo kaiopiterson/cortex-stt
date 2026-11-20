@@ -22,7 +22,7 @@ TEST_KEY = "unit-test-only-" + "x" * 32
 @pytest.fixture
 def application(monkeypatch, tmp_path):
     limiter.reset()
-    settings = Settings(api_key=TEST_KEY, device="cpu", compute="int8")
+    settings = Settings(api_key=TEST_KEY, device="cpu", compute="int8", rate_limit="60/minute")
     result = TranscriptionResult(
         text="Olá mundo",
         segments=(),
@@ -39,7 +39,7 @@ def application(monkeypatch, tmp_path):
     inference.is_ready = True
     inference.transcribe = AsyncMock(return_value=result)
     inference.transcribe_window = AsyncMock(return_value=result)
-    inference._prepare_audio = Mock(return_value=np.zeros(16000, dtype=np.float32))
+    inference.prepare_audio = Mock(return_value=np.zeros(16000, dtype=np.float32))
     app = FastAPI()
     app.state.settings = settings
     install_gateway_state(app, tmp_path)

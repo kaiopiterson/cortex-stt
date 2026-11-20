@@ -78,6 +78,7 @@ class TranscriptionResult:
     processing_ms: float
     queue_wait_ms: float
     audio_offset_seconds: float
+    filtered_segments: int = 0
 
     @property
     def rtf(self) -> float:
@@ -215,6 +216,10 @@ class InferenceService:
                 consume(resampler.resample(frame))
             consume(resampler.resample(None))
         return np.concatenate(chunks) if chunks else np.empty(0, dtype=np.float32)
+
+    def prepare_audio(self, audio: np.ndarray | BytesIO) -> np.ndarray:
+        """Decode and validate audio into mono float32 samples at 16 kHz."""
+        return self._prepare_audio(audio)
 
     def _prepare_audio(self, audio: np.ndarray | BytesIO) -> np.ndarray:
         if isinstance(audio, BytesIO):
@@ -401,6 +406,7 @@ class InferenceService:
         language: str | None = None,
         previous_text: str | None = None,
         hotwords: str | None = None,
+        priority: int = 1,
     ) -> TranscriptionResult:
         if offset_samples < 0:
             raise ValueError("Audio offset cannot be negative")
@@ -413,4 +419,5 @@ class InferenceService:
             audio_offset_seconds=offset_samples / self.settings.sample_rate,
             word_timestamps=True,
             hotwords=hotwords,
+            priority=priority,
         )
