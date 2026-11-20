@@ -1,7 +1,7 @@
 # Roadmap
 - v0.1 Foundation MVP: REST, WebSocket protótipo, Faster-Whisper, Docker, interface e benchmark REST; validação GPU pendente.
 - v0.2 Ultra Low Latency: segmentação incremental, CUDA, AudioWorklet, sessões longas controladas, benchmarks WebSocket, WER/CER e latência.
-- v0.3 API Gateway: chaves individuais, tokens temporários, rate limiting, quotas, Prometheus e Grafana.
+- v0.3 API Gateway: chaves individuais, tokens temporários com sujeito, rate limiting, cotas por app e por sujeito, auditoria, Prometheus e Grafana. Implementado e auditado; homologação em GPU pendente.
 - v0.4 Universal SDK: Python, TypeScript, Android e Windows; contrato comum, reconexão e integração piloto com Ritmo.
 - v0.5 Edge Lite: VAD, reamostragem, compressão e segmentação no dispositivo.
 - v0.6 Edge AI Offline: avaliação whisper.cpp, ONNX e Sherpa-ONNX; modelos quantizados, integridade, bateria e temperatura.
