@@ -27,3 +27,45 @@ py tests/benchmark.py amostra.wav --rounds 5
 Mede REST após warmup com 1/4/10 requisições concorrentes. Não validado em GPU. Metas de latência não comprovadas. Não exponha diretamente à internet antes de revisar segurança. O túnel opcional requer configuração própria e HTTPS.
 
 Veja [ROADMAP.md](ROADMAP.md), [ARCHITECTURE.md](ARCHITECTURE.md) e [SECURITY.md](SECURITY.md).
+
+## v0.2 production hardening
+
+Streaming protocol 1.1 uses mono PCM s16le at 16000 Hz, a 4-second
+window, 1-second step and 0.5-second confirmation margin (not the
+actual overlap, which is normally 3 seconds). Default session limit:
+1800 seconds.
+
+New settings:
+
+| Variable | Default |
+|---|---|
+| STT_STREAM_SESSIONS | inherited from STT_SESSIONS (10) |
+| STT_REST_CONCURRENCY | 4 |
+| STT_RATE_LIMIT | 60/minute |
+| STT_TRUST_PROXY_HEADERS | false |
+| STT_STREAM_CONNECTIONS_PER_KEY | 4 |
+| STT_STREAM_BUSY_FAILURES | 3 |
+| STT_STREAM_QUEUE_SIZE | 8 |
+| STT_ENVIRONMENT | development |
+
+Only trust proxy headers when the origin cannot be reached by untrusted
+clients. Production disables Swagger, ReDoc and OpenAPI routes.
+REST and streaming share inference workers but not admission slots.
+
+WebSocket handshake: send JSON with api_key, language, format
+(pcm_s16le), sample_rate (16000), channels (1). Wait for ready before
+sending binary PCM, then send the text command finish.
+
+Event examples (selected fields):
+
+```json
+{"type":"ready","protocol_version":"1.1","sample_rate":16000}
+{"type":"partial","text":"Olá","confirmed_text":"","partial_text":"Olá"}
+{"type":"warning","code":"server_busy"}
+{"type":"final","text":"Olá","confirmed_text":"Olá","partial_text":""}
+{"type":"error","code":"invalid_language","message":"Invalid language configuration"}
+```
+
+Run CPU/mock checks with python -m pip install -r requirements-dev.txt
+and python -m pytest. Production readiness requires successful clean
+build, CI and GPU load tests.
