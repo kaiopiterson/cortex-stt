@@ -1,5 +1,7 @@
 """Limit upload bodies before multipart parsing."""
 from app.core.auth import identify_client
+from app.api.admin import require_admin
+from starlette.requests import Request
 from limits import parse
 from limits.storage import MemoryStorage
 from limits.strategies import FixedWindowRateLimiter
@@ -15,13 +17,22 @@ class BodyLimit:
         self.unauthorized = FixedWindowRateLimiter(MemoryStorage())
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or scope["path"] != "/v1/audio/transcriptions":
+        if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
         settings = scope["app"].state.settings
+        path = scope["path"]
+        if path in {"/admin", "/metrics", "/v1/admin"} or path.startswith("/v1/admin/"):
+            try:
+                await require_admin(Request(scope), HTTPConnection(scope).headers.get("Authorization"))
+            except HTTPException as exc:
+                await JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)(scope, receive, send)
+                return
         connection = HTTPConnection(scope)
         scheme, _, token = connection.headers.get("Authorization", "").partition(" ")
-        if scheme.lower() != "bearer" or not await identify_client(connection, token):
+        if path == "/v1/audio/transcriptions" and (
+            scheme.lower() != "bearer" or not await identify_client(connection, token)
+        ):
             allowed = self.unauthorized.hit(parse("60/minute"), client_ip(connection))
             response = JSONResponse(
                 {"detail": "Invalid API credentials" if allowed else "Rate limit exceeded"},
@@ -30,7 +41,7 @@ class BodyLimit:
             )
             await response(scope, receive, send)
             return
-        limit = settings.max_upload_bytes + 65536
+        limit = settings.max_upload_bytes + 65536 if path == "/v1/audio/transcriptions" else 65536
         headers = dict(scope["headers"])
         try:
             declared = int(headers.get(b"content-length", b"0"))

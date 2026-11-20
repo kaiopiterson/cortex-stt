@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from app.api import api_router
+from app.api import build_router
 from app.core.body_limit import BodyLimit
 from app.core.config import get_settings
 from app.core.registry import AppRegistry
@@ -67,7 +67,7 @@ def create_app() -> FastAPI:
     
     # Registro do router consolidado
     application.add_middleware(BodyLimit)
-    application.include_router(api_router)
+    application.include_router(build_router(include_admin=get_settings().admin_key is not None))
     return application
 
 app = create_app()
