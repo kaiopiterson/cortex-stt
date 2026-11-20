@@ -193,6 +193,26 @@ async def finalize_stream(session: StreamingSession, inference: InferenceService
     end = session.buffer_offset_samples + session.buffered_samples
     return await process_window(session, inference, session.buffered_samples, end, final=True)
 
+async def next_frame(queue, receiver, timeout):
+    pending = asyncio.create_task(queue.get())
+    try:
+        done, _ = await asyncio.wait(
+            {pending, receiver}, timeout=timeout,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if receiver in done:
+            receiver.result()
+        if pending in done:
+            return pending.result()
+        if receiver in done:
+            return await asyncio.wait_for(pending, timeout=timeout)
+        raise asyncio.TimeoutError
+    finally:
+        if not pending.done():
+            pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+
+
 async def websocket_error(websocket: WebSocket, code: str, message: str, close_code: int) -> None:
     try:
         await websocket.send_json({"type": "error", "code": code, "message": message})
@@ -281,7 +301,7 @@ async def stream_audio(websocket: WebSocket) -> None:
                 await websocket.close(code=1000)
                 return
             try:
-                message = await asyncio.wait_for(queue.get(), timeout=min(settings.stream_idle_timeout_seconds, remaining))
+                message = await next_frame(queue, receiver, min(settings.stream_idle_timeout_seconds, remaining))
             except asyncio.TimeoutError:
                 result = await finalize_stream(session, inference)
                 payload = session.event_payload("final", result)
@@ -335,6 +355,9 @@ async def stream_audio(websocket: WebSocket) -> None:
         await websocket_error(websocket, "inference_error", "Transcription failed", 1011)
     except OSError:
         logger.debug("Streaming transport interrupted")
+    except Exception:
+        logger.exception("Unexpected streaming failure")
+        await websocket_error(websocket, "internal_error", "Streaming failed", 1011)
     finally:
         if receiver is not None:
             receiver.cancel()
