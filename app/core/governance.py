@@ -7,7 +7,7 @@ from app.core.usage import AppSlots, UsageStore
 
 
 def registered(identity: str | None) -> bool:
-    return identity is not None and identity != "legacy"
+    return identity is not None
 
 
 async def charge(connection: HTTPConnection, identity: str | None,
@@ -15,7 +15,9 @@ async def charge(connection: HTTPConnection, identity: str | None,
     if identity is None or not registered(identity):
         return
     settings = connection.app.state.settings
-    store: UsageStore = connection.app.state.usage
+    store: UsageStore | None = getattr(connection.app.state, "usage", None)
+    if store is None:
+        return
     await asyncio.to_thread(
         store.charge, identity, requests, samples, settings.app_requests_per_minute,
         settings.app_daily_audio_seconds * settings.sample_rate,

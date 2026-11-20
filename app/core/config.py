@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     environment: Literal["development", "staging", "production"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     admin_key: SecretStr | None = None
+    legacy_api_key_enabled: bool | None = None
     api_key: SecretStr
     rate_limit: str = "60/minute"
     trust_proxy_headers: bool = False
@@ -88,6 +89,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_configuration(self):
+        if self.legacy_api_key_enabled is None:
+            object.__setattr__(self, 'legacy_api_key_enabled', self.environment != 'production')
         if self.admin_key is not None:
             secret = self.admin_key.get_secret_value()
             if len(secret) < 32 or secret == self.api_key.get_secret_value() or secret.startswith(('stt_', 'tok_')):

@@ -29,7 +29,7 @@ def client_ip(connection: HTTPConnection) -> str:
 
 def request_key(request) -> str:
     identity = getattr(request.state, 'app_identity', None)
-    if identity and identity != 'legacy':
+    if identity:
         return 'app:' + identity
     scheme, _, token = request.headers.get("Authorization", "").partition(" ")
     return client_key(request, token if scheme.lower() == "bearer" else None)

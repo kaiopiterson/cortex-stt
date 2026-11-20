@@ -22,7 +22,7 @@ async def identify_client(connection: HTTPConnection, key: str | None) -> Identi
     if secrets.compare_digest(
         key.encode("utf-8"), settings.api_key.get_secret_value().encode("utf-8")
     ):
-        return Identity("legacy", "legacy")
+        return Identity("legacy", "legacy") if settings.legacy_api_key_enabled else None
     registry: AppRegistry | None = getattr(connection.app.state, "registry", None)
     if registry is None:
         return None
