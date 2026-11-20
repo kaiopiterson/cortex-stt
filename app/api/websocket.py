@@ -423,8 +423,17 @@ async def stream_audio(websocket: WebSocket) -> None:
             chunk = message.get("bytes")
             if not chunk:
                 continue
+            try:
+                await charge(websocket, identity, samples=len(chunk) // settings.sample_width_bytes)
+            except UsageLimit:
+                result = await finalize_stream(session, inference)
+                if await authorized(force=True):
+                    payload = session.event_payload("final", result)
+                    payload["reason"] = "quota_exceeded"
+                    await websocket.send_json(payload)
+                    await websocket.close(code=1000)
+                return
             session.append_audio(chunk)
-            await charge(websocket, identity, samples=len(chunk) // settings.sample_width_bytes)
             if session.mode == "utterance":
                 continue
             # Drain already queued audio without reordering control messages.
@@ -436,8 +445,17 @@ async def stream_audio(websocket: WebSocket) -> None:
                 if queued.get("bytes") is None:
                     deferred = queued
                     break
+                try:
+                    await charge(websocket, identity, samples=len(queued["bytes"]) // settings.sample_width_bytes)
+                except UsageLimit:
+                    result = await finalize_stream(session, inference)
+                    if await authorized(force=True):
+                        payload = session.event_payload("final", result)
+                        payload["reason"] = "quota_exceeded"
+                        await websocket.send_json(payload)
+                        await websocket.close(code=1000)
+                    return
                 session.append_audio(queued["bytes"])
-                await charge(websocket, identity, samples=len(queued["bytes"]) // settings.sample_width_bytes)
             skipped = trim_backlog(session)
             if skipped:
                 await websocket.send_json({
