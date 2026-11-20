@@ -103,7 +103,9 @@ class AppRegistry:
             {"id": row[0], "name": row[1], "created_at": row[2], "status": row[3]} for row in rows
         ]
 
-    def issue_token(self, key: str, ttl: int = 900, subject: str | None = None) -> tuple[str, int] | None:
+    def issue_token(
+        self, key: str, ttl: int = 900, subject: str | None = None
+    ) -> tuple[str, int] | None:
         if not key.startswith("stt_") or len(key) != 47 or not 1 <= ttl <= 3600:
             return None
         if subject is not None and not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", subject):
