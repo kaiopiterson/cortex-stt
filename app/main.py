@@ -1,6 +1,5 @@
 """CortexLab STT v0.2.0 — application orchestration."""
 import asyncio
-import os
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -44,7 +43,7 @@ async def lifespan(app: FastAPI):
         logger.info("CortexLab STT stopped")
 
 def create_app() -> FastAPI:
-    production = os.getenv("STT_ENVIRONMENT", "development").lower() == "production"
+    production = get_settings().environment == "production"
     application = FastAPI(
         title="CortexLab STT Engine", 
         version="0.2.0",
