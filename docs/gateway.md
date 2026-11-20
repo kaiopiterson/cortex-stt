@@ -5,6 +5,26 @@ O volume registry em /data guarda o banco. Faça backup consistente com
 SQLite backup API, não copie apenas o arquivo principal enquanto houver WAL.
 Não use docker compose down -v para atualizar.
 
+## Retenção e backup (AUD-14)
+
+A cada `STT_MAINTENANCE_INTERVAL_SECONDS` (padrão 1 h, e no startup) o serviço
+remove buckets de minuto com mais de `STT_RETENTION_MINUTE_DAYS` (2), buckets
+diários com mais de `STT_RETENTION_DAY_DAYS` (400), tokens expirados e eventos
+administrativos com mais de `STT_RETENTION_AUDIT_DAYS` (400). Buckets mensais
+são mantidos.
+
+Backup online (consistente com WAL, verifica integridade):
+
+    docker compose exec stt python3 -m app.db_backup backup /data/backups/registry-AAAA-MM-DD.sqlite3
+
+Restauração (somente com o serviço parado; recusa arquivo corrompido):
+
+    docker compose stop stt
+    docker compose run --rm --no-deps stt python3 -m app.db_backup restore /data/backups/ARQUIVO
+    docker compose start stt
+
+Copie os backups para fora do host e teste a restauração periodicamente.
+
 ## Administração local
 
 docker compose exec stt python3 -m app.registry_cli register Ritmo

@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import sqlite3
 from collections.abc import Callable
 from typing import cast
 from contextlib import asynccontextmanager
@@ -15,6 +16,7 @@ from app.core.config import get_settings
 from app.core.registry import AppRegistry
 from app.core.auth import IdentityCache
 from app.core.gateway import Gateway
+from app.core.maintenance import RetentionSchedule, run_retention
 from app.core.usage import AppSlots, UsageLedger, UsageStore
 from app.core.limiter import limiter
 from app.services.inference import InferenceService
@@ -23,9 +25,18 @@ logger = logging.getLogger(__name__)
 
 
 async def maintenance_loop(app: FastAPI) -> None:
-    """Persist usage in batches; the database stays off the request hot path."""
+    """Persist usage in batches and apply retention; keeps SQLite off the hot path."""
     settings = app.state.settings
+    schedule = RetentionSchedule(settings.maintenance_interval_seconds)
     while True:
+        if schedule.due():
+            schedule.mark()
+            try:
+                await asyncio.to_thread(
+                    run_retention, settings, app.state.registry, app.state.usage
+                )
+            except sqlite3.Error:
+                logger.warning("Retention deferred: database unavailable")
         await asyncio.sleep(settings.usage_flush_seconds)
         await app.state.ledger.flush()
         app.state.ledger.forget_stale()
