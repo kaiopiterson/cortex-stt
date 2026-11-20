@@ -31,7 +31,7 @@ def test_exchange_http(tmp_path):
                     "/v1/auth/token", headers={"Authorization": f"Bearer {invalid}"}
                 )
                 assert response.status_code == 401
-            for _ in range(26):
+            for _ in range(29):
                 assert client.post(
                     "/v1/auth/token", headers={"Authorization": f"Bearer {key}"}
                 ).status_code == 200

@@ -1,0 +1,9 @@
+# Requires Docker Compose 2.24.4+ for !override.
+services:
+  stt:
+    ports: !override []
+    environment:
+      STT_TRUST_PROXY_HEADERS: "true"
+  tunnel:
+    depends_on:
+      - stt

@@ -3,8 +3,11 @@ import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
+from limits import parse
+from limits.storage import MemoryStorage
+from limits.strategies import FixedWindowRateLimiter
 
-from app.core.limiter import client_ip, limiter
+from app.core.limiter import client_ip
 
 router = APIRouter()
 
@@ -14,17 +17,30 @@ def token_rate_key(request: Request) -> str:
 
 
 @router.post("/v1/auth/token")
-@limiter.limit("30/minute", key_func=token_rate_key)
 async def issue_token(
     request: Request,
     response: Response,
     authorization: Annotated[str | None, Header()] = None,
 ):
+    state = request.app.state
+    if not hasattr(state, "token_limits"):
+        state.token_limits = FixedWindowRateLimiter(MemoryStorage())
+    limits = state.token_limits
+    ip = token_rate_key(request)
+    failure_limit = parse("30/minute")
+    if not limits.test(failure_limit, "failure", ip):
+        raise HTTPException(429, "Rate limit exceeded", headers={"Retry-After": "60"})
     scheme, _, key = (authorization or "").partition(" ")
-    registry = getattr(request.app.state, "registry", None)
-    result = None
-    if scheme.lower() == "bearer" and registry is not None and len(key) == 47:
-        result = await asyncio.to_thread(registry.issue_token, key)
+    registry = getattr(state, "registry", None)
+    app_id = None
+    if scheme.lower() == "bearer" and registry is not None and key.startswith("stt_") and len(key) == 47:
+        app_id = await asyncio.to_thread(registry.identify, key)
+    if app_id is None:
+        limits.hit(failure_limit, "failure", ip)
+        raise HTTPException(401, "Invalid API credentials", headers={"WWW-Authenticate": "Bearer"})
+    if not limits.hit(parse("30/minute"), "issuance", app_id):
+        raise HTTPException(429, "Rate limit exceeded", headers={"Retry-After": "60"})
+    result = await asyncio.to_thread(registry.issue_token, key)
     if result is None:
         raise HTTPException(401, "Invalid API credentials", headers={"WWW-Authenticate": "Bearer"})
     token, ttl = result
