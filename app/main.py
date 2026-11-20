@@ -3,7 +3,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from app.api.routes import router
+from app.api import api_router as router
 from app.core.config import get_settings
 from app.services.inference import InferenceService
 
