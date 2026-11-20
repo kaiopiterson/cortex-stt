@@ -208,6 +208,7 @@ async def stream_audio(websocket: WebSocket) -> None:
     acquired = False
     key_slot = None
     session = None
+    receiver = None
     await websocket.accept()
     try:
         try:
@@ -259,6 +260,17 @@ async def stream_audio(websocket: WebSocket) -> None:
             "max_duration_seconds": settings.stream_max_duration_seconds,
             "processing": processing_metadata(settings),
         })
+        queue = asyncio.Queue(maxsize=settings.stream_queue_size)
+
+        async def receive_frames():
+            while True:
+                message = await websocket.receive()
+                await queue.put(message)
+                if message["type"] == "websocket.disconnect" or message.get("text") == "finish":
+                    return
+
+        receiver = asyncio.create_task(receive_frames())
+        busy_failures = 0
         while True:
             remaining = settings.stream_max_duration_seconds - (monotonic() - started)
             if remaining <= 0:
@@ -269,7 +281,7 @@ async def stream_audio(websocket: WebSocket) -> None:
                 await websocket.close(code=1000)
                 return
             try:
-                message = await asyncio.wait_for(websocket.receive(), timeout=min(settings.stream_idle_timeout_seconds, remaining))
+                message = await asyncio.wait_for(queue.get(), timeout=min(settings.stream_idle_timeout_seconds, remaining))
             except asyncio.TimeoutError:
                 result = await finalize_stream(session, inference)
                 payload = session.event_payload("final", result)
@@ -294,22 +306,18 @@ async def stream_audio(websocket: WebSocket) -> None:
             chunk = message.get("bytes")
             if not chunk:
                 continue
-            if len(chunk) > settings.stream_max_chunk_bytes:
-                await websocket_error(websocket, "chunk_too_large", "Maximum audio chunk size exceeded", 1009)
-                return
-            chunk_view = memoryview(chunk)
-            if len(chunk_view) % settings.sample_width_bytes:
-                raise InvalidAudioError("Invalid PCM sample alignment")
-            incoming = len(chunk_view) // settings.sample_width_bytes
-            if session.total_received_samples + incoming > settings.stream_max_duration_seconds * settings.sample_rate:
-                raise AudioDurationError("Maximum streaming duration exceeded")
-            step_bytes = settings.stream_step_samples * settings.sample_width_bytes
-            latest = None
-            for offset in range(0, len(chunk_view), step_bytes):
-                session.append_audio(bytes(chunk_view[offset:offset + step_bytes]))
-                result = await advance_stream(session, inference)
-                if result is not None:
-                    latest = result
+            session.append_audio(chunk)
+            # Retain all audio within the next window; apply backpressure rather
+            # than silently dropping speech when the receiver falls behind.
+            try:
+                latest = await advance_stream(session, inference)
+                busy_failures = 0
+            except InferenceBusyError:
+                busy_failures += 1
+                await websocket.send_json({"type": "warning", "code": "server_busy"})
+                if busy_failures >= settings.stream_busy_failures:
+                    raise
+                continue
             if latest is not None:
                 await websocket.send_json(session.event_payload("partial", latest))
     except WebSocketDisconnect:
@@ -328,6 +336,9 @@ async def stream_audio(websocket: WebSocket) -> None:
     except OSError:
         logger.debug("Streaming transport interrupted")
     finally:
+        if receiver is not None:
+            receiver.cancel()
+            await asyncio.gather(receiver, return_exceptions=True)
         if session is not None:
             session.buffer.clear()
             session.committed_words.clear()
