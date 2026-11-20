@@ -48,3 +48,13 @@ def valid_language(value: str) -> bool:
     from faster_whisper.tokenizer import _LANGUAGE_CODES
     return len(value) <= 32 and (value.lower() in {"", "auto"} or
         value.lower().replace("_", "-").split("-")[0] in _LANGUAGE_CODES)
+
+
+def parse_hotwords(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or len(value) > 50:
+        raise ValueError("Invalid hotwords")
+    if any(not isinstance(word, str) or not word.strip() or len(word) > 64 for word in value):
+        raise ValueError("Invalid hotwords")
+    return " ".join(value) or None

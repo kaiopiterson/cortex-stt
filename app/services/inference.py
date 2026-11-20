@@ -84,8 +84,18 @@ class TranscriptionResult:
             return 0.0
         return (self.processing_ms / 1000.0) / self.audio_duration_seconds
 
+    @property
+    def confidence(self) -> float:
+        scores = [
+            math.exp(min(0.0, s.avg_logprob)) * (1 - max(0.0, min(1.0, s.no_speech_prob)))
+            for s in self.segments
+            if s.text.strip() and math.isfinite(s.avg_logprob) and math.isfinite(s.no_speech_prob)
+        ]
+        return round(sum(scores) / len(scores), 4) if scores else 0.0
+
     def to_dict(self) -> dict[str, Any]:
         result = asdict(self)
+        result["confidence"] = self.confidence
         result["rtf"] = round(self.rtf, 4)
         return result
 
@@ -214,13 +224,13 @@ class InferenceService:
 
     def _transcribe_sync(self, audio: np.ndarray | BytesIO, language: str | None,
                          initial_prompt: str | None, audio_offset_seconds: float,
-                         queue_wait_ms: float, word_timestamps: bool, model: Any) -> TranscriptionResult:
+                         queue_wait_ms: float, word_timestamps: bool, model: Any, hotwords: str | None = None) -> TranscriptionResult:
         started = perf_counter()
         samples = self._prepare_audio(audio)
         audio_duration = samples.size / self.settings.sample_rate
         try:
             segments, info = model.transcribe(
-                samples, language=language, initial_prompt=initial_prompt,
+                samples, language=language, initial_prompt=initial_prompt, hotwords=hotwords,
                 beam_size=self.settings.beam_size,
                 condition_on_previous_text=self.settings.condition_on_previous_text,
                 word_timestamps=word_timestamps, vad_filter=self.settings.vad_enabled,
@@ -265,7 +275,7 @@ class InferenceService:
 
     async def transcribe(self, audio: np.ndarray | BytesIO, language: str | None = None,
                          initial_prompt: str | None = None, audio_offset_seconds: float = 0.0,
-                         word_timestamps: bool | None = None, priority: int = 1) -> TranscriptionResult:
+                         word_timestamps: bool | None = None, priority: int = 1, hotwords: str | None = None) -> TranscriptionResult:
         if not self.is_ready:
             raise ModelNotReadyError("Speech model is not ready")
         if not math.isfinite(audio_offset_seconds) or audio_offset_seconds < 0:
@@ -293,7 +303,7 @@ class InferenceService:
         try:
             job = loop.run_in_executor(self._executor, self._transcribe_sync, audio, language,
                                        initial_prompt, audio_offset_seconds, queue_wait_ms,
-                                       word_timestamps, self._model)
+                                       word_timestamps, self._model, hotwords)
         except RuntimeError as exc:
             self._semaphore.release()
             raise ModelExecutionError("Inference executor is unavailable") from exc
@@ -303,7 +313,7 @@ class InferenceService:
         return await asyncio.shield(job)
 
     async def transcribe_window(self, pcm: np.ndarray, offset_samples: int,
-                                language: str | None = None, previous_text: str | None = None) -> TranscriptionResult:
+                                language: str | None = None, previous_text: str | None = None, hotwords: str | None = None) -> TranscriptionResult:
         if offset_samples < 0:
             raise ValueError("Audio offset cannot be negative")
         if pcm.size > self.settings.stream_window_samples:
@@ -311,5 +321,5 @@ class InferenceService:
         return await self.transcribe(
             audio=pcm, language=language, initial_prompt=previous_text,
             audio_offset_seconds=offset_samples / self.settings.sample_rate,
-            word_timestamps=True,
+            word_timestamps=True, hotwords=hotwords,
         )

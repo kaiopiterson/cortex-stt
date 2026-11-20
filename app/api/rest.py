@@ -1,5 +1,6 @@
 """REST endpoints."""
 import asyncio
+import json
 import logging
 from io import BytesIO
 from pathlib import Path
@@ -8,7 +9,7 @@ from typing import Annotated
 from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse
 from app.api.common import (SettingsDependency, InferenceDependency, Authenticated,
-                            acquire_session, processing_metadata, valid_language)
+                            acquire_session, processing_metadata, valid_language, parse_hotwords)
 from app.core.limiter import configured_limit, limiter
 from app.services.inference import (AudioDurationError, InvalidAudioError, InferenceBusyError,
                                     ModelNotReadyError, ModelExecutionError)
@@ -50,7 +51,12 @@ async def transcribe_audio(request: Request, response: Response, settings: Setti
                            model: Annotated[str | None, Form()] = None,
                            language: Annotated[str | None, Form()] = None,
                            prompt: Annotated[str | None, Form()] = None,
-                           mode: Annotated[str, Form()] = "dictation") -> dict:
+                           mode: Annotated[str, Form()] = "dictation",
+                           hotwords: Annotated[str | None, Form()] = None) -> dict:
+    try:
+        hints = parse_hotwords(json.loads(hotwords) if hotwords is not None else None)
+    except ValueError as exc:
+        raise HTTPException(422, "Invalid hotwords") from exc
     if mode not in ("command", "dictation"):
         raise HTTPException(422, "Invalid transcription mode")
     if language is not None and not valid_language(language):
@@ -73,8 +79,9 @@ async def transcribe_audio(request: Request, response: Response, settings: Setti
             raise HTTPException(422, "Empty audio file")
         if len(audio) > settings.max_upload_bytes:
             raise HTTPException(413, "Maximum upload size exceeded")
-        result = await inference.transcribe(audio=BytesIO(audio), language=language, initial_prompt=prompt, priority=0 if mode == "command" else 1)
+        result = await inference.transcribe(audio=BytesIO(audio), language=language, initial_prompt=prompt, priority=0 if mode == "command" else 1, hotwords=hints)
         payload = result.to_dict()
+        payload["needs_review"] = not result.text.strip() or result.confidence < settings.review_threshold
         payload["total_ms"] = round((monotonic() - started) * 1000, 2)
         payload["processing"] = processing_metadata(settings)
         return payload

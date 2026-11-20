@@ -7,7 +7,7 @@ import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.core.config import Settings
 from app.core.limiter import stream_client_key
-from app.api.common import acquire_session, processing_metadata, validate_api_key, valid_language
+from app.api.common import acquire_session, processing_metadata, validate_api_key, valid_language, parse_hotwords
 from app.services.inference import (AudioDurationError, InferenceBusyError, InferenceService,
     InvalidAudioError, ModelExecutionError, ModelNotReadyError, TranscriptionResult, TranscriptionWord)
 
@@ -19,6 +19,9 @@ class StreamingSession:
     settings: Settings
     language: str = "pt"
     mode: str = "stream"
+    hotwords: str | None = None
+    confidence: float = 0.0
+    audio_skipped: bool = False
     buffer: bytearray = field(default_factory=bytearray)
     committed_words: list[TranscriptionWord] = field(default_factory=list)
     provisional_words: list[TranscriptionWord] = field(default_factory=list)
@@ -138,6 +141,7 @@ class StreamingSession:
             elif not final:
                 provisional.append(word)
         self.provisional_words = [] if final else provisional
+        self.confidence = result.confidence
         self.revision += 1
 
     def event_payload(self, event_type: str, result: TranscriptionResult | None = None) -> dict:
@@ -145,6 +149,8 @@ class StreamingSession:
             "type": event_type, "text": self.full_text,
             "confirmed_text": self.confirmed_text, "partial_text": self.provisional_text,
             "language": self.language, "revision": self.revision,
+            "confidence": self.confidence,
+            "needs_review": self.audio_skipped or not self.full_text or self.confidence < self.settings.review_threshold,
             "audio_duration_seconds": round(self.audio_duration_seconds, 3),
             "confirmed_until_seconds": round(self.committed_until_seconds, 3),
             "segments": [{"start": w.start, "end": w.end, "text": w.text}
@@ -167,7 +173,7 @@ async def process_window(session: StreamingSession, inference: InferenceService,
     window_end = session.buffer_offset_samples + pcm.size
     result = await inference.transcribe_window(
         pcm=pcm, offset_samples=session.buffer_offset_samples,
-        language=session.language, previous_text=session.previous_text)
+        language=session.language, previous_text=session.previous_text, hotwords=session.hotwords)
     if result.language:
         session.language = result.language
     session.apply_result(result, window_end, confirmation_limit_samples, final)
@@ -182,6 +188,7 @@ def trim_backlog(session: StreamingSession) -> int:
         return 0
     skipped = max(0, session.buffered_samples - settings.stream_window_samples)
     if skipped:
+        session.audio_skipped = True
         session.discard_samples(skipped)
         session.provisional_words.clear()
     return skipped
@@ -211,7 +218,7 @@ async def finalize_stream(session: StreamingSession, inference: InferenceService
         if not session.buffered_samples:
             return None
         result = await inference.transcribe(
-            audio=session.get_pcm(), language=session.language, word_timestamps=True, priority=0
+            audio=session.get_pcm(), language=session.language, word_timestamps=True, priority=0, hotwords=session.hotwords
         )
         session.language = result.language
         session.apply_result(result, session.total_received_samples,
@@ -293,6 +300,11 @@ async def stream_audio(websocket: WebSocket) -> None:
         if mode not in ("stream", "utterance"):
             await websocket_error(websocket, "invalid_mode", "Invalid transcription mode", 1008)
             return
+        try:
+            hints = parse_hotwords(config.get("hotwords"))
+        except ValueError:
+            await websocket_error(websocket, "invalid_hotwords", "Invalid hotwords", 1008)
+            return
         key = stream_client_key(websocket, api_key)
         counts = getattr(websocket.app.state, "stream_key_counts", None)
         if counts is None:
@@ -305,7 +317,7 @@ async def stream_audio(websocket: WebSocket) -> None:
         key_slot = key
         await acquire_session(semaphore, 0.2)
         acquired = True
-        session = StreamingSession(settings=settings, language=language.lower(), mode=mode)
+        session = StreamingSession(settings=settings, language=language.lower(), mode=mode, hotwords=hints)
         started = monotonic()
         await websocket.send_json({
             "type": "ready", "version": settings.app_version, "protocol_version": "1.1",

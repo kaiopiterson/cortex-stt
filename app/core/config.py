@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     stream_max_lag_seconds: float = Field(default=3.0, gt=0, le=60)
     stream_busy_failures: int = Field(default=3, ge=1, le=20)
     stream_queue_size: int = Field(default=8, ge=1, le=64)
+    review_threshold: float = Field(default=0.6, ge=0, le=1)
     vad_enabled: bool = True
     vad_threshold: float = Field(default=0.5, gt=0.0, lt=1.0)
     vad_min_silence_ms: int = Field(default=350, ge=100, le=3000)
