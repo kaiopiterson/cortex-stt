@@ -1,4 +1,5 @@
 """Read-only operational endpoints, disabled without a separate admin secret."""
+
 import asyncio
 import secrets
 from pathlib import Path
@@ -47,7 +48,8 @@ async def metrics(request: Request) -> PlainTextResponse:
     else:
         gauges["stt_gpu_available"] = 0
     return PlainTextResponse(
-        telemetry.render(gauges), media_type="text/plain; version=0.0.4",
+        telemetry.render(gauges),
+        media_type="text/plain; version=0.0.4",
         headers={"Cache-Control": "no-store"},
     )
 
@@ -69,12 +71,15 @@ async def dashboard(request: Request):
     html = await asyncio.to_thread(
         (Path(__file__).resolve().parents[1] / "admin.html").read_text, encoding="utf-8"
     )
-    return HTMLResponse(html, headers={
-        "Cache-Control": "no-store",
-        "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
-        "Referrer-Policy": "no-referrer",
-        "X-Content-Type-Options": "nosniff",
-    })
+    return HTMLResponse(
+        html,
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get("/v1/admin/apps", include_in_schema=False, dependencies=[Depends(require_admin)])
@@ -82,17 +87,20 @@ async def applications(request: Request):
     state = request.app.state
     rows = await asyncio.to_thread(state.registry.list_apps)
     settings = state.settings
-    return JSONResponse({
-        "data": rows,
-        "limits": {
-            "requests_per_minute": settings.app_requests_per_minute,
-            "daily_seconds": settings.app_daily_audio_seconds,
-            "monthly_seconds": settings.app_monthly_audio_seconds,
-            "concurrency": settings.app_concurrency,
-            "sample_rate": settings.sample_rate,
+    return JSONResponse(
+        {
+            "data": rows,
+            "limits": {
+                "requests_per_minute": settings.app_requests_per_minute,
+                "daily_seconds": settings.app_daily_audio_seconds,
+                "monthly_seconds": settings.app_monthly_audio_seconds,
+                "concurrency": settings.app_concurrency,
+                "sample_rate": settings.sample_rate,
+            },
+            "active": dict(state.app_slots.counts),
         },
-        "active": dict(state.app_slots.counts),
-    }, headers={"Cache-Control": "no-store"})
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.post("/v1/admin/apps", include_in_schema=False, dependencies=[Depends(require_admin)])
@@ -101,19 +109,26 @@ async def register_app(request: Request, body: Registration):
         app_id, key = await asyncio.to_thread(request.app.state.registry.register, body.name)
     except ValueError as exc:
         raise HTTPException(422, "Invalid application name") from exc
-    return JSONResponse({"id": app_id, "api_key": key}, status_code=201,
-                        headers={"Cache-Control": "no-store"})
+    return JSONResponse(
+        {"id": app_id, "api_key": key}, status_code=201, headers={"Cache-Control": "no-store"}
+    )
 
 
-@router.post("/v1/admin/apps/{app_id}/{action}", include_in_schema=False,
-             dependencies=[Depends(require_admin)])
+@router.post(
+    "/v1/admin/apps/{app_id}/{action}",
+    include_in_schema=False,
+    dependencies=[Depends(require_admin)],
+)
 async def manage_app(request: Request, app_id: str, action: str):
     registry = request.app.state.registry
     rows = await asyncio.to_thread(registry.list_apps)
     if not any(row["id"] == app_id for row in rows):
         raise HTTPException(404, "Application not found")
-    operations = {"rotate": registry.rotate, "revoke": registry.revoke_app,
-                  "revoke-tokens": registry.revoke_tokens}
+    operations = {
+        "rotate": registry.rotate,
+        "revoke": registry.revoke_app,
+        "revoke-tokens": registry.revoke_tokens,
+    }
     if action not in operations:
         raise HTTPException(404, "Operation not found")
     try:

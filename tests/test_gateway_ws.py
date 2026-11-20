@@ -12,9 +12,7 @@ from app.core.usage import AppSlots, UsageStore
 
 def test_revoked_session_and_shared_slots(tmp_path):
     app = FastAPI()
-    app.state.settings = Settings(
-        api_key="x" * 40, device="cpu", compute="int8", app_concurrency=1
-    )
+    app.state.settings = Settings(api_key="x" * 40, device="cpu", compute="int8", app_concurrency=1)
     registry = AppRegistry(str(tmp_path / "registry.db"))
     registry.initialize()
     identity, key = registry.register("Ritmo")

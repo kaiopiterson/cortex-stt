@@ -1,4 +1,5 @@
 """WebSocket streaming and per-session state."""
+
 import asyncio
 import logging
 from dataclasses import dataclass, field
@@ -11,11 +12,20 @@ from app.core.governance import charge, registered, slots
 from app.core.usage import UsageLimit
 from app.core.limiter import stream_client_key
 from app.api.common import acquire_session, processing_metadata, valid_language, parse_hotwords
-from app.services.inference import (AudioDurationError, InferenceBusyError, InferenceService,
-    InvalidAudioError, ModelExecutionError, ModelNotReadyError, TranscriptionResult, TranscriptionWord)
+from app.services.inference import (
+    AudioDurationError,
+    InferenceBusyError,
+    InferenceService,
+    InvalidAudioError,
+    ModelExecutionError,
+    ModelNotReadyError,
+    TranscriptionResult,
+    TranscriptionWord,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
 
 @dataclass(slots=True)
 class StreamingSession:
@@ -37,8 +47,9 @@ class StreamingSession:
     @property
     def duration_limit(self) -> int:
         if self.mode == "utterance":
-            return min(self.settings.utterance_max_seconds,
-                       self.settings.max_audio_duration_seconds)
+            return min(
+                self.settings.utterance_max_seconds, self.settings.max_audio_duration_seconds
+            )
         return self.settings.stream_max_duration_seconds
 
     @property
@@ -87,26 +98,32 @@ class StreamingSession:
         if samples <= 0:
             return
         samples = min(samples, self.buffered_samples)
-        del self.buffer[:samples * self.settings.sample_width_bytes]
+        del self.buffer[: samples * self.settings.sample_width_bytes]
         self.buffer_offset_samples += samples
 
     def get_pcm(self, sample_count: int | None = None) -> np.ndarray:
         if sample_count is None:
             sample_count = self.buffered_samples
-        snapshot = bytes(self.buffer[:sample_count * self.settings.sample_width_bytes])
+        snapshot = bytes(self.buffer[: sample_count * self.settings.sample_width_bytes])
         return np.frombuffer(snapshot, dtype="<i2").astype(np.float32) / 32768.0
 
     def should_infer(self) -> bool:
-        return self.total_received_samples - self.last_inference_samples >= self.settings.stream_step_samples
+        return (
+            self.total_received_samples - self.last_inference_samples
+            >= self.settings.stream_step_samples
+        )
 
     def _extract_words(self, result: TranscriptionResult) -> list[TranscriptionWord]:
-        words = []
+        words: list[TranscriptionWord] = []
         for segment in result.segments:
             if segment.words:
                 words.extend(segment.words)
             elif segment.text.strip():
-                words.append(TranscriptionWord(start=segment.start, end=segment.end,
-                                               text=segment.text, probability=0.0))
+                words.append(
+                    TranscriptionWord(
+                        start=segment.start, end=segment.end, text=segment.text, probability=0.0
+                    )
+                )
         return sorted(words, key=lambda w: (w.start, w.end))
 
     @staticmethod
@@ -122,19 +139,30 @@ class StreamingSession:
                 break
             same_text = self._normalize_word(committed.text) == normalized
             temporal_overlap = min(committed.end, word.end) - max(committed.start, word.start)
-            close_boundary = abs(committed.start - word.start) <= 0.15 and abs(committed.end - word.end) <= 0.20
+            close_boundary = (
+                abs(committed.start - word.start) <= 0.15 and abs(committed.end - word.end) <= 0.20
+            )
             if same_text and (temporal_overlap > 0 or close_boundary):
                 return True
         return False
 
-    def apply_result(self, result: TranscriptionResult, window_end_samples: int,
-                     confirmation_limit_samples: int, final: bool = False) -> None:
+    def apply_result(
+        self,
+        result: TranscriptionResult,
+        window_end_samples: int,
+        confirmation_limit_samples: int,
+        final: bool = False,
+    ) -> None:
         window_end = window_end_samples / self.settings.sample_rate
         boundary = window_end if final else confirmation_limit_samples / self.settings.sample_rate
         provisional = []
         for word in self._extract_words(result):
-            if (not np.isfinite(word.start) or not np.isfinite(word.end)
-                    or word.end <= word.start or word.end > window_end + 0.1):
+            if (
+                not np.isfinite(word.start)
+                or not np.isfinite(word.end)
+                or word.end <= word.start
+                or word.end > window_end + 0.1
+            ):
                 continue
             if word.end <= self.committed_until_seconds or self._is_duplicate(word):
                 continue
@@ -149,25 +177,40 @@ class StreamingSession:
 
     def event_payload(self, event_type: str, result: TranscriptionResult | None = None) -> dict:
         payload = {
-            "type": event_type, "text": self.full_text,
-            "confirmed_text": self.confirmed_text, "partial_text": self.provisional_text,
-            "language": self.language, "revision": self.revision,
+            "type": event_type,
+            "text": self.full_text,
+            "confirmed_text": self.confirmed_text,
+            "partial_text": self.provisional_text,
+            "language": self.language,
+            "revision": self.revision,
             "confidence": self.confidence,
-            "needs_review": self.audio_skipped or not self.full_text or self.confidence < self.settings.review_threshold,
+            "needs_review": self.audio_skipped
+            or not self.full_text
+            or self.confidence < self.settings.review_threshold,
             "audio_duration_seconds": round(self.audio_duration_seconds, 3),
             "confirmed_until_seconds": round(self.committed_until_seconds, 3),
-            "segments": [{"start": w.start, "end": w.end, "text": w.text}
-                         for w in self.committed_words + self.provisional_words],
+            "segments": [
+                {"start": w.start, "end": w.end, "text": w.text}
+                for w in self.committed_words + self.provisional_words
+            ],
             "processing": processing_metadata(self.settings),
         }
         if result is not None:
-            payload.update(processing_ms=result.processing_ms, queue_wait_ms=result.queue_wait_ms,
-                           rtf=round(result.rtf, 4))
+            payload.update(
+                processing_ms=result.processing_ms,
+                queue_wait_ms=result.queue_wait_ms,
+                rtf=round(result.rtf, 4),
+            )
         return payload
 
-async def process_window(session: StreamingSession, inference: InferenceService,
-                         sample_count: int, confirmation_limit_samples: int,
-                         final: bool = False) -> TranscriptionResult | None:
+
+async def process_window(
+    session: StreamingSession,
+    inference: InferenceService,
+    sample_count: int,
+    confirmation_limit_samples: int,
+    final: bool = False,
+) -> TranscriptionResult | None:
     if sample_count <= 0:
         return None
     pcm = session.get_pcm(sample_count)
@@ -175,8 +218,12 @@ async def process_window(session: StreamingSession, inference: InferenceService,
         return None
     window_end = session.buffer_offset_samples + pcm.size
     result = await inference.transcribe_window(
-        pcm=pcm, offset_samples=session.buffer_offset_samples,
-        language=session.language, previous_text=session.previous_text, hotwords=session.hotwords)
+        pcm=pcm,
+        offset_samples=session.buffer_offset_samples,
+        language=session.language,
+        previous_text=session.previous_text,
+        hotwords=session.hotwords,
+    )
     if result.language:
         session.language = result.language
     session.apply_result(result, window_end, confirmation_limit_samples, final)
@@ -197,7 +244,9 @@ def trim_backlog(session: StreamingSession) -> int:
     return skipped
 
 
-async def advance_stream(session: StreamingSession, inference: InferenceService) -> TranscriptionResult | None:
+async def advance_stream(
+    session: StreamingSession, inference: InferenceService
+) -> TranscriptionResult | None:
     settings = session.settings
     window = settings.stream_window_samples
     step = settings.stream_step_samples
@@ -211,21 +260,32 @@ async def advance_stream(session: StreamingSession, inference: InferenceService)
         session.discard_samples(step)
     if session.buffered_samples > 0 and session.should_infer():
         end = session.buffer_offset_samples + session.buffered_samples
-        latest = await process_window(session, inference, session.buffered_samples,
-                                      max(session.buffer_offset_samples, end - margin))
+        latest = await process_window(
+            session,
+            inference,
+            session.buffered_samples,
+            max(session.buffer_offset_samples, end - margin),
+        )
     return latest
 
 
-async def finalize_stream(session: StreamingSession, inference: InferenceService) -> TranscriptionResult | None:
+async def finalize_stream(
+    session: StreamingSession, inference: InferenceService
+) -> TranscriptionResult | None:
     if session.mode == "utterance":
         if not session.buffered_samples:
             return None
         result = await inference.transcribe(
-            audio=session.get_pcm(), language=session.language, word_timestamps=True, priority=0, hotwords=session.hotwords
+            audio=session.get_pcm(),
+            language=session.language,
+            word_timestamps=True,
+            priority=0,
+            hotwords=session.hotwords,
         )
         session.language = result.language
-        session.apply_result(result, session.total_received_samples,
-                             session.total_received_samples, final=True)
+        session.apply_result(
+            result, session.total_received_samples, session.total_received_samples, final=True
+        )
         return result
     await advance_stream(session, inference)
     if session.buffered_samples == 0:
@@ -234,11 +294,13 @@ async def finalize_stream(session: StreamingSession, inference: InferenceService
     end = session.buffer_offset_samples + session.buffered_samples
     return await process_window(session, inference, session.buffered_samples, end, final=True)
 
+
 async def next_frame(queue, receiver, timeout):
     pending = asyncio.create_task(queue.get())
     try:
         done, _ = await asyncio.wait(
-            {pending, receiver}, timeout=timeout,
+            {pending, receiver},
+            timeout=timeout,
             return_when=asyncio.FIRST_COMPLETED,
         )
         if receiver in done:
@@ -261,46 +323,72 @@ async def websocket_error(websocket: WebSocket, code: str, message: str, close_c
     except (WebSocketDisconnect, RuntimeError, OSError):
         return
 
+
 @router.websocket("/v1/audio/stream")
 async def stream_audio(websocket: WebSocket) -> None:
     settings: Settings = websocket.app.state.settings
     inference: InferenceService = websocket.app.state.inference_service
     semaphore: asyncio.Semaphore = websocket.app.state.stream_slots
     acquired = False
-    key_slot = None
-    identity = None
+    key_slot: str | None = None
+    counts: dict[str, int] = {}
+    identity: str | None = None
     app_acquired = False
     session = None
     receiver = None
     await websocket.accept()
     try:
         try:
-            config = await asyncio.wait_for(websocket.receive_json(), timeout=settings.stream_auth_timeout_seconds)
+            config = await asyncio.wait_for(
+                websocket.receive_json(), timeout=settings.stream_auth_timeout_seconds
+            )
         except asyncio.TimeoutError:
-            await websocket_error(websocket, "authentication_timeout", "Authentication timeout", 1008)
+            await websocket_error(
+                websocket, "authentication_timeout", "Authentication timeout", 1008
+            )
             return
         except (ValueError, KeyError, TypeError):
-            await websocket_error(websocket, "invalid_handshake", "Expected JSON configuration", 1003)
+            await websocket_error(
+                websocket, "invalid_handshake", "Expected JSON configuration", 1003
+            )
             return
         if not isinstance(config, dict):
             await websocket_error(websocket, "invalid_handshake", "Expected JSON object", 1003)
             return
         api_key = config.get("api_key")
-        identity = await identify_client(websocket, api_key) if isinstance(api_key, str) else None
-        if identity is None:
+        if not isinstance(api_key, str):
             await websocket_error(websocket, "unauthorized", "Invalid API credentials", 1008)
             return
+        credential = await identify_client(websocket, api_key)
+        if credential is None:
+            await websocket_error(websocket, "unauthorized", "Invalid API credentials", 1008)
+            return
+        if credential.kind == "permanent":
+            await websocket_error(websocket, "forbidden_scope", "Forbidden credential scope", 1008)
+            return
+        identity = credential.app_id
         if not inference.is_ready:
-            await websocket_error(websocket, "model_not_ready", "Inference model is not ready", 1013)
+            await websocket_error(
+                websocket, "model_not_ready", "Inference model is not ready", 1013
+            )
             return
         language = config.get("language", settings.language)
         if not isinstance(language, str) or not valid_language(language):
-            await websocket_error(websocket, "invalid_language", "Invalid language configuration", 1008)
+            await websocket_error(
+                websocket, "invalid_language", "Invalid language configuration", 1008
+            )
             return
-        if (config.get("format", "pcm_s16le") != "pcm_s16le"
-                or config.get("sample_rate", settings.sample_rate) != settings.sample_rate
-                or config.get("channels", settings.channels) != settings.channels):
-            await websocket_error(websocket, "unsupported_audio_format", "Expected PCM signed 16-bit little-endian, 16 kHz, mono", 1003)
+        if (
+            config.get("format", "pcm_s16le") != "pcm_s16le"
+            or config.get("sample_rate", settings.sample_rate) != settings.sample_rate
+            or config.get("channels", settings.channels) != settings.channels
+        ):
+            await websocket_error(
+                websocket,
+                "unsupported_audio_format",
+                "Expected PCM signed 16-bit little-endian, 16 kHz, mono",
+                1003,
+            )
             return
         mode = config.get("mode", "stream")
         if mode not in ("stream", "utterance"):
@@ -316,10 +404,13 @@ async def stream_audio(websocket: WebSocket) -> None:
             slots(websocket).acquire(identity, settings.app_concurrency)
             app_acquired = True
         key = "app:" + identity if registered(identity) else stream_client_key(websocket, api_key)
-        counts = getattr(websocket.app.state, "stream_key_counts", None)
-        if counts is None:
-            counts = {}
-            websocket.app.state.stream_key_counts = counts
+        shared_counts: dict[str, int] | None = getattr(
+            websocket.app.state, "stream_key_counts", None
+        )
+        if shared_counts is None:
+            shared_counts = {}
+            websocket.app.state.stream_key_counts = shared_counts
+        counts = shared_counts
         if counts.get(key, 0) >= settings.stream_connections_per_key:
             await websocket_error(websocket, "server_busy", "Connection capacity unavailable", 1013)
             return
@@ -327,17 +418,27 @@ async def stream_audio(websocket: WebSocket) -> None:
         key_slot = key
         await acquire_session(semaphore, 0.2)
         acquired = True
-        session = StreamingSession(settings=settings, language=language.lower(), mode=mode, hotwords=hints)
+        session = StreamingSession(
+            settings=settings, language=language.lower(), mode=mode, hotwords=hints
+        )
         started = monotonic()
-        await websocket.send_json({
-            "type": "ready", "version": settings.app_version, "protocol_version": "1.1",
-            "sample_rate": settings.sample_rate, "channels": settings.channels, "format": "pcm_s16le",
-            "window_seconds": settings.stream_window_seconds, "step_seconds": settings.stream_step_seconds,
-            "confirmation_margin_seconds": settings.stream_overlap_seconds,
-            "max_duration_seconds": session.duration_limit, "mode": mode,
-            "processing": processing_metadata(settings),
-        })
-        queue = asyncio.Queue(maxsize=settings.stream_queue_size)
+        await websocket.send_json(
+            {
+                "type": "ready",
+                "version": settings.app_version,
+                "protocol_version": "1.1",
+                "sample_rate": settings.sample_rate,
+                "channels": settings.channels,
+                "format": "pcm_s16le",
+                "window_seconds": settings.stream_window_seconds,
+                "step_seconds": settings.stream_step_seconds,
+                "confirmation_margin_seconds": settings.stream_overlap_seconds,
+                "max_duration_seconds": session.duration_limit,
+                "mode": mode,
+                "processing": processing_metadata(settings),
+            }
+        )
+        queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=settings.stream_queue_size)
 
         async def receive_frames():
             while True:
@@ -349,8 +450,15 @@ async def stream_audio(websocket: WebSocket) -> None:
         receiver = asyncio.create_task(receive_frames())
         busy_failures = 0
         deferred = None
-        async def authorized():
-            if await identify_client(websocket, api_key) != identity:
+        checked_at = 0.0
+
+        async def authorized(force: bool = False) -> bool:
+            nonlocal checked_at
+            if not force and monotonic() - checked_at < 1.0:
+                return True
+            current = await identify_client(websocket, api_key, active_session=True)
+            checked_at = monotonic()
+            if current is None or current.app_id != identity:
                 await websocket_error(websocket, "unauthorized", "Invalid API credentials", 1008)
                 return False
             return True
@@ -361,7 +469,7 @@ async def stream_audio(websocket: WebSocket) -> None:
             remaining = session.duration_limit - (monotonic() - started)
             if remaining <= 0:
                 result = await finalize_stream(session, inference)
-                if not await authorized():
+                if not await authorized(force=True):
                     return
                 payload = session.event_payload("final", result)
                 payload["reason"] = "session_duration_limit"
@@ -372,10 +480,14 @@ async def stream_audio(websocket: WebSocket) -> None:
                 if deferred is not None:
                     message, deferred = deferred, None
                 else:
-                    idle_deadline = monotonic() + min(settings.stream_idle_timeout_seconds, remaining)
+                    idle_deadline = monotonic() + min(
+                        settings.stream_idle_timeout_seconds, remaining
+                    )
                     while True:
                         try:
-                            message = await next_frame(queue, receiver, min(1.0, max(0.0, idle_deadline - monotonic())))
+                            message = await next_frame(
+                                queue, receiver, min(1.0, max(0.0, idle_deadline - monotonic()))
+                            )
                             break
                         except asyncio.TimeoutError:
                             if not await authorized():
@@ -386,10 +498,14 @@ async def stream_audio(websocket: WebSocket) -> None:
                     return
             except asyncio.TimeoutError:
                 result = await finalize_stream(session, inference)
-                if not await authorized():
+                if not await authorized(force=True):
                     return
                 payload = session.event_payload("final", result)
-                payload["reason"] = "session_duration_limit" if monotonic() - started >= session.duration_limit else "idle_timeout"
+                payload["reason"] = (
+                    "session_duration_limit"
+                    if monotonic() - started >= session.duration_limit
+                    else "idle_timeout"
+                )
                 await websocket.send_json(payload)
                 await websocket.close(code=1000)
                 return
@@ -399,7 +515,7 @@ async def stream_audio(websocket: WebSocket) -> None:
             if command is not None:
                 if command == "finish":
                     result = await finalize_stream(session, inference)
-                    if not await authorized():
+                    if not await authorized(force=True):
                         return
                     await websocket.send_json(session.event_payload("final", result))
                     await websocket.close(code=1000)
@@ -407,13 +523,24 @@ async def stream_audio(websocket: WebSocket) -> None:
                 if command == "ping":
                     await websocket.send_json({"type": "pong"})
                     continue
-                await websocket_error(websocket, "unsupported_command", "Unsupported control command", 1008)
+                await websocket_error(
+                    websocket, "unsupported_command", "Unsupported control command", 1008
+                )
                 return
             chunk = message.get("bytes")
             if not chunk:
                 continue
+            try:
+                await charge(websocket, identity, samples=len(chunk) // settings.sample_width_bytes)
+            except UsageLimit:
+                result = await finalize_stream(session, inference)
+                if await authorized(force=True):
+                    payload = session.event_payload("final", result)
+                    payload["reason"] = "quota_exceeded"
+                    await websocket.send_json(payload)
+                    await websocket.close(code=1000)
+                return
             session.append_audio(chunk)
-            await charge(websocket, identity, samples=len(chunk) // settings.sample_width_bytes)
             if session.mode == "utterance":
                 continue
             # Drain already queued audio without reordering control messages.
@@ -425,14 +552,30 @@ async def stream_audio(websocket: WebSocket) -> None:
                 if queued.get("bytes") is None:
                     deferred = queued
                     break
+                try:
+                    await charge(
+                        websocket,
+                        identity,
+                        samples=len(queued["bytes"]) // settings.sample_width_bytes,
+                    )
+                except UsageLimit:
+                    result = await finalize_stream(session, inference)
+                    if await authorized(force=True):
+                        payload = session.event_payload("final", result)
+                        payload["reason"] = "quota_exceeded"
+                        await websocket.send_json(payload)
+                        await websocket.close(code=1000)
+                    return
                 session.append_audio(queued["bytes"])
-                await charge(websocket, identity, samples=len(queued["bytes"]) // settings.sample_width_bytes)
             skipped = trim_backlog(session)
             if skipped:
-                await websocket.send_json({
-                    "type": "warning", "code": "lagging",
-                    "skipped_seconds": skipped / settings.sample_rate,
-                })
+                await websocket.send_json(
+                    {
+                        "type": "warning",
+                        "code": "lagging",
+                        "skipped_seconds": skipped / settings.sample_rate,
+                    }
+                )
             try:
                 latest = await advance_stream(session, inference)
                 busy_failures = 0
@@ -482,4 +625,3 @@ async def stream_audio(websocket: WebSocket) -> None:
             semaphore.release()
         if app_acquired and identity is not None:
             slots(websocket).release(identity)
-

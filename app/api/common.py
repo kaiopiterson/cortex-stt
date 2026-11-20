@@ -1,4 +1,5 @@
 """Shared API dependencies and helpers."""
+
 import asyncio
 import secrets
 from typing import Annotated
@@ -8,6 +9,7 @@ from app.core.auth import identify_client
 from app.core.governance import charge
 from app.core.usage import UsageLimit
 from app.services.inference import InferenceService, InferenceBusyError
+
 
 def get_settings_from_state(request: Request) -> Settings:
     return request.app.state.settings
@@ -22,30 +24,50 @@ InferenceDependency = Annotated[InferenceService, Depends(get_inference_service)
 
 
 def validate_api_key(supplied_key: str | None, settings: Settings) -> bool:
-    return bool(supplied_key and secrets.compare_digest(
-        supplied_key.encode("utf-8"), settings.api_key.get_secret_value().encode("utf-8")))
+    return bool(
+        supplied_key
+        and secrets.compare_digest(
+            supplied_key.encode("utf-8"), settings.api_key.get_secret_value().encode("utf-8")
+        )
+    )
 
 
-async def require_api_key(request: Request,
-                    authorization: Annotated[str | None, Header()] = None) -> None:
+async def require_api_key(
+    request: Request, authorization: Annotated[str | None, Header()] = None
+) -> None:
     scheme, separator, token = (authorization or "").partition(" ")
-    identity = await identify_client(request, token) if separator and scheme.lower() == "bearer" else None
+    identity = (
+        await identify_client(request, token) if separator and scheme.lower() == "bearer" else None
+    )
     if identity is None:
-        raise HTTPException(401, "Invalid API credentials" if authorization else "Missing API credentials",
-                            headers={"WWW-Authenticate": "Bearer"})
+        raise HTTPException(
+            401,
+            "Invalid API credentials" if authorization else "Missing API credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-    request.state.app_identity = identity
+    if identity.kind == "permanent":
+        raise HTTPException(403, "Forbidden credential scope")
+    request.state.app_identity = identity.app_id
     try:
-        await charge(request, identity, requests=1)
+        await charge(request, identity.app_id, requests=1)
     except UsageLimit as exc:
         raise HTTPException(429, "Application usage limit exceeded") from exc
 
 
 Authenticated = Annotated[None, Depends(require_api_key)]
 
+
 def processing_metadata(settings: Settings) -> dict:
-    return {"mode": "server", "location": "server", "server_used": True,
-            "engine": "faster-whisper", "model": settings.model, "device": settings.device}
+    return {
+        "mode": "server",
+        "location": "server",
+        "server_used": True,
+        "engine": "faster-whisper",
+        "model": settings.model,
+        "device": settings.device,
+    }
+
 
 async def acquire_session(semaphore: asyncio.Semaphore, timeout: float) -> None:
     try:
@@ -56,8 +78,11 @@ async def acquire_session(semaphore: asyncio.Semaphore, timeout: float) -> None:
 
 def valid_language(value: str) -> bool:
     from faster_whisper.tokenizer import _LANGUAGE_CODES
-    return len(value) <= 32 and (value.lower() in {"", "auto"} or
-        value.lower().replace("_", "-").split("-")[0] in _LANGUAGE_CODES)
+
+    return len(value) <= 32 and (
+        value.lower() in {"", "auto"}
+        or value.lower().replace("_", "-").split("-")[0] in _LANGUAGE_CODES
+    )
 
 
 def parse_hotwords(value: object) -> str | None:

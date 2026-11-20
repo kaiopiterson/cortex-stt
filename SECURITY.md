@@ -9,7 +9,14 @@ A chave permanente permanece no backend confiável, nunca no APK.
 O backend consumidor autentica seus usuários antes de emitir tokens.
 Rotação invalida tokens e chave anterior; revogação bloqueia novas
 autenticações e sessões WS são revalidadas. Inferência nativa em curso
-não é cancelada. Chave legada preserva limites antigos.
+não é cancelada.
+Escopos: a chave permanente (stt_) só troca por token em /v1/auth/token;
+REST e WebSocket aceitam apenas token (tok_) ou a chave legada.
+Chave legada (STT_API_KEY): desligada por padrão em production
+(STT_LEGACY_API_KEY_ENABLED). Quando ligada, é tratada como o aplicativo
+interno "legacy": um único bucket de rate limit, cotas e concorrência
+compartilhados por todos os clientes legados. Rotacionar STT_API_KEY não
+zera esses limites.
 Admin usa segredo independente, sem cookies ou armazenamento local.
 Cotas agregadas persistem em SQLite; proteja volume e backups.
 Retenção e auditoria de eventos administrativos ainda pendentes.

@@ -1,4 +1,5 @@
 """Measure live STT WebSocket latency using PCM WAV input."""
+
 import argparse
 import asyncio
 import json
@@ -42,9 +43,9 @@ async def session(args, pcm):
             async def send_audio():
                 nonlocal finish
                 for offset in range(0, len(pcm), 3200):
-                    await ws.send(pcm[offset:offset + 3200])
+                    await ws.send(pcm[offset : offset + 3200])
                     if not args.accelerated:
-                        await asyncio.sleep(len(pcm[offset:offset + 3200]) / 32000)
+                        await asyncio.sleep(len(pcm[offset : offset + 3200]) / 32000)
                 finish = time.monotonic()
                 await ws.send("finish")
 
@@ -101,13 +102,19 @@ async def main():
     if not args.key or args.sessions < 1:
         parser.error("STT_API_KEY and positive --sessions required")
     clips = [load_pcm(path) for path in args.wav]
-    rows = await asyncio.gather(*(session(args, clips[i % len(clips)]) for i in range(args.sessions)))
+    rows = await asyncio.gather(
+        *(session(args, clips[i % len(clips)]) for i in range(args.sessions))
+    )
     report = summarize(rows)
-    args.json.write_text(json.dumps({"mode": args.mode, "summary": report, "sessions": rows}, indent=2))
+    args.json.write_text(
+        json.dumps({"mode": args.mode, "summary": report, "sessions": rows}, indent=2)
+    )
     print(f"{'Metric':15} {'P50':>12} {'P95':>12} {'P99':>12}")
     for metric in ("ttft_ms", "final_ms", "rtf"):
         print(f"{metric:15}" + "".join(f"{str(report[metric][f'p{p}']):>12}" for p in (50, 95, 99)))
-    print(f"Success: {report['successful']}/{report['sessions']}; server_busy: {report['server_busy_rate']:.1%}")
+    print(
+        f"Success: {report['successful']}/{report['sessions']}; server_busy: {report['server_busy_rate']:.1%}"
+    )
 
 
 if __name__ == "__main__":

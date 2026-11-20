@@ -1,4 +1,5 @@
 """Atomic UTC usage accounting, shared by all credentials of an application."""
+
 from contextlib import closing
 from datetime import datetime, timezone
 
@@ -24,17 +25,28 @@ class UsageStore:
         with closing(self.registry.connect()) as db:
             rows = db.execute(
                 """SELECT app_id,period,bucket,amount FROM usage_buckets
-                ORDER BY bucket DESC,app_id,period LIMIT ?""", (limit,)
+                ORDER BY bucket DESC,app_id,period LIMIT ?""",
+                (limit,),
             ).fetchall()
         return [
-            {"app_id": row[0], "period": row[1], "bucket": row[2],
-             "amount": row[3], "unit": "requests" if row[1] == "minute" else "samples"}
+            {
+                "app_id": row[0],
+                "period": row[1],
+                "bucket": row[2],
+                "amount": row[3],
+                "unit": "requests" if row[1] == "minute" else "samples",
+            }
             for row in rows
         ]
 
     def charge(
-        self, app_id: str, requests: int, samples: int,
-        rpm: int, daily_samples: int, monthly_samples: int,
+        self,
+        app_id: str,
+        requests: int,
+        samples: int,
+        rpm: int,
+        daily_samples: int,
+        monthly_samples: int,
         now: datetime | None = None,
     ) -> None:
         if requests < 0 or samples < 0:
@@ -65,6 +77,7 @@ class UsageStore:
 
 class AppSlots:
     """Single-process combined REST/WS admission; no await between check and increment."""
+
     def __init__(self):
         self.counts: dict[str, int] = {}
 

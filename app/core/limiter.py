@@ -1,10 +1,12 @@
 """Shared process-local rate limiting."""
+
 from hashlib import sha256
 from ipaddress import ip_address
 
 from slowapi import Limiter
 from app.core.config import get_settings
 from starlette.requests import HTTPConnection
+
 
 def configured_limit(key: str) -> str:
     return get_settings().rate_limit
@@ -28,9 +30,9 @@ def client_ip(connection: HTTPConnection) -> str:
 
 
 def request_key(request) -> str:
-    identity = getattr(request.state, 'app_identity', None)
-    if identity and identity != 'legacy':
-        return 'app:' + identity
+    identity = getattr(request.state, "app_identity", None)
+    if identity:
+        return "app:" + identity
     scheme, _, token = request.headers.get("Authorization", "").partition(" ")
     return client_key(request, token if scheme.lower() == "bearer" else None)
 

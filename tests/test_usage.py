@@ -39,11 +39,13 @@ def test_parallel_charges(tmp_path):
     registry.initialize()
     store = UsageStore(registry)
     store.initialize()
+
     def attempt(_):
         try:
             store.charge("a", 1, 1, 3, 3, 3)
             return True
         except UsageLimit:
             return False
+
     with ThreadPoolExecutor(max_workers=8) as pool:
         assert sum(pool.map(attempt, range(10))) == 3

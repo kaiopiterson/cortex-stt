@@ -1,4 +1,5 @@
 """Local-only management of application credentials."""
+
 import argparse
 import json
 

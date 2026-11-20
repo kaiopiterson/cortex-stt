@@ -19,3 +19,15 @@
 - Registro SQLite, tokens, rotação, revogação, cotas e concorrência por app.
 - Métricas Prometheus, NVML opcional, auditoria agregada e dashboard.
 - Homologação, locks e benchmark GPU pendentes.
+
+### v0.3.0 — correções da auditoria (Onda 1)
+- AUD-01: emissão de tokens corrigida.
+- AUD-02: admin autenticado antes do parsing; limite global de corpo.
+- AUD-05: escopos de credencial; chave permanente não transcreve (403).
+- AUD-04: chave legada atrás de STT_LEGACY_API_KEY_ENABLED e contabilizada
+  como app "legacy" (bucket, cota e concorrência compartilhados). Mudança de
+  comportamento: clientes legados deixam de ter buckets por hash de chave.
+- AUD-06/13: sessão WS sobrevive à expiração do token; cota esgotada envia final.
+- AUD-08: limites de emissão por app e de falhas por IP; compose.tunnel.yaml.
+- AUD-09: dependências corrigidas com lock versionado e hashes.
+- AUD-03: workflow de CI voltou a ser YAML válido; lint e tipos zerados.
