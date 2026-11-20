@@ -6,8 +6,9 @@ from time import monotonic
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.core.config import Settings
+from app.core.auth import identify_client
 from app.core.limiter import stream_client_key
-from app.api.common import acquire_session, processing_metadata, validate_api_key, valid_language, parse_hotwords
+from app.api.common import acquire_session, processing_metadata, valid_language, parse_hotwords
 from app.services.inference import (AudioDurationError, InferenceBusyError, InferenceService,
     InvalidAudioError, ModelExecutionError, ModelNotReadyError, TranscriptionResult, TranscriptionWord)
 
@@ -281,7 +282,7 @@ async def stream_audio(websocket: WebSocket) -> None:
             await websocket_error(websocket, "invalid_handshake", "Expected JSON object", 1003)
             return
         api_key = config.get("api_key")
-        if not isinstance(api_key, str) or not validate_api_key(api_key, settings):
+        if not isinstance(api_key, str) or not await identify_client(websocket, api_key):
             await websocket_error(websocket, "unauthorized", "Invalid API credentials", 1008)
             return
         if not inference.is_ready:

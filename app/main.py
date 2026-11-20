@@ -9,6 +9,7 @@ from slowapi.errors import RateLimitExceeded
 from app.api import api_router
 from app.core.body_limit import BodyLimit
 from app.core.config import get_settings
+from app.core.registry import AppRegistry
 from app.core.limiter import limiter
 from app.services.inference import InferenceService
 
@@ -25,6 +26,8 @@ async def lifespan(app: FastAPI):
     
     inference_service = InferenceService(settings=settings)
     app.state.settings = settings
+    app.state.registry = AppRegistry(settings.registry_path)
+    await asyncio.to_thread(app.state.registry.initialize)
     app.state.inference_service = inference_service
     app.state.stream_slots = asyncio.Semaphore(settings.stream_sessions or settings.sessions)
     app.state.rest_slots = asyncio.Semaphore(settings.rest_concurrency)
@@ -46,7 +49,7 @@ def create_app() -> FastAPI:
     production = get_settings().environment == "production"
     application = FastAPI(
         title="CortexLab STT Engine", 
-        version="0.2.0",
+        version="0.3.0",
         description="CortexLab Speech-to-Text Engine. REST and WebSocket transcription API designed for server-side inference and future hybrid edge integration.",
         lifespan=lifespan, 
         docs_url=None if production else "/docs", 

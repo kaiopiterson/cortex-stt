@@ -1,6 +1,5 @@
 """Limit upload bodies before multipart parsing."""
-from hashlib import sha256
-from secrets import compare_digest
+from app.core.auth import identify_client
 from limits import parse
 from limits.storage import MemoryStorage
 from limits.strategies import FixedWindowRateLimiter
@@ -22,10 +21,7 @@ class BodyLimit:
         settings = scope["app"].state.settings
         connection = HTTPConnection(scope)
         scheme, _, token = connection.headers.get("Authorization", "").partition(" ")
-        if scheme.lower() != "bearer" or not compare_digest(
-            sha256(token.encode()).digest(),
-            sha256(settings.api_key.get_secret_value().encode()).digest(),
-        ):
+        if scheme.lower() != "bearer" or not await identify_client(connection, token):
             allowed = self.unauthorized.hit(parse("60/minute"), client_ip(connection))
             response = JSONResponse(
                 {"detail": "Invalid API credentials" if allowed else "Rate limit exceeded"},

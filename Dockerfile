@@ -32,6 +32,7 @@ RUN useradd -m appuser \
     && chown -R appuser:appuser /models
 
 COPY --chown=appuser:appuser app/ /srv/app/
+RUN mkdir -p /data && chown $(id -u appuser):$(id -g appuser) /data
 USER appuser
 EXPOSE 8000
 
