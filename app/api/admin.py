@@ -10,9 +10,14 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, JSONResponse
 
 from app.core.telemetry import telemetry
+from app.core.limiter import client_ip
+from limits import parse
+from limits.storage import MemoryStorage
+from limits.strategies import FixedWindowRateLimiter
 from app.services.gpu_info import gpu_metrics
 
 router = APIRouter()
+admin_failures = FixedWindowRateLimiter(MemoryStorage())
 
 
 async def require_admin(
@@ -21,10 +26,13 @@ async def require_admin(
     secret = request.app.state.settings.admin_key
     if secret is None:
         raise HTTPException(404, "Not found")
+    if not admin_failures.test(parse("30/minute"), client_ip(request)):
+        raise HTTPException(429, "Rate limit exceeded", headers={"Retry-After": "60"})
     scheme, _, token = (authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not secrets.compare_digest(
         token.encode(), secret.get_secret_value().encode()
     ):
+        admin_failures.hit(parse("30/minute"), client_ip(request))
         raise HTTPException(401, "Invalid credentials", headers={"WWW-Authenticate": "Bearer"})
 
 

@@ -22,7 +22,7 @@ RUN apt-get update \
 
 WORKDIR /srv
 COPY requirements.txt /srv/requirements.txt
-RUN python3 -m pip install --no-cache-dir -r /srv/requirements.txt \
+RUN python3 -m pip install --no-cache-dir --only-binary=:all: -r /srv/requirements.txt \
     && python3 -m pip check \
     && python3 -c "import faster_whisper, requests"
 

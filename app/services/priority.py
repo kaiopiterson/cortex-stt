@@ -7,7 +7,7 @@ from itertools import count
 class PrioritySlots:
     def __init__(self, capacity: int):
         self.available = capacity
-        self.waiters = []
+        self.waiters: list[tuple[int, int, asyncio.Future[None]]] = []
         self.sequence = count()
 
     async def acquire(self, priority: int = 1) -> None:
