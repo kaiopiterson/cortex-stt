@@ -74,9 +74,9 @@ class AppRegistry:
     def list_apps(self) -> list[dict[str, str]]:
         with closing(self.connect()) as db:
             rows = db.execute(
-                "SELECT id,name,created_at FROM applications ORDER BY created_at,id"
+                """SELECT id,name,created_at, CASE WHEN id IN (SELECT app_id FROM revoked_apps) THEN 'revoked' ELSE 'active' END FROM applications ORDER BY created_at,id"""
             ).fetchall()
-        return [{"id": row[0], "name": row[1], "created_at": row[2]} for row in rows]
+        return [{"id": row[0], "name": row[1], "created_at": row[2], "status": row[3]} for row in rows]
 
     def issue_token(self, key: str, ttl: int = 900) -> tuple[str, int] | None:
         if not key.startswith("stt_") or len(key) != 47 or not 1 <= ttl <= 3600:
