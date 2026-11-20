@@ -198,7 +198,7 @@ async def finalize_stream(session: StreamingSession, inference: InferenceService
         if not session.buffered_samples:
             return None
         result = await inference.transcribe(
-            audio=session.get_pcm(), language=session.language, word_timestamps=True
+            audio=session.get_pcm(), language=session.language, word_timestamps=True, priority=0
         )
         session.language = result.language
         session.apply_result(result, session.total_received_samples,

@@ -49,7 +49,10 @@ async def transcribe_audio(request: Request, response: Response, settings: Setti
                            file: Annotated[UploadFile, File()],
                            model: Annotated[str | None, Form()] = None,
                            language: Annotated[str | None, Form()] = None,
-                           prompt: Annotated[str | None, Form()] = None) -> dict:
+                           prompt: Annotated[str | None, Form()] = None,
+                           mode: Annotated[str, Form()] = "dictation") -> dict:
+    if mode not in ("command", "dictation"):
+        raise HTTPException(422, "Invalid transcription mode")
     if language is not None and not valid_language(language):
         raise HTTPException(422, "Invalid language")
     if (model or settings.model) not in {settings.model, "whisper-1"}:
@@ -70,7 +73,7 @@ async def transcribe_audio(request: Request, response: Response, settings: Setti
             raise HTTPException(422, "Empty audio file")
         if len(audio) > settings.max_upload_bytes:
             raise HTTPException(413, "Maximum upload size exceeded")
-        result = await inference.transcribe(audio=BytesIO(audio), language=language, initial_prompt=prompt)
+        result = await inference.transcribe(audio=BytesIO(audio), language=language, initial_prompt=prompt, priority=0 if mode == "command" else 1)
         payload = result.to_dict()
         payload["total_ms"] = round((monotonic() - started) * 1000, 2)
         payload["processing"] = processing_metadata(settings)

@@ -13,6 +13,7 @@ import ctranslate2
 import numpy as np
 from faster_whisper import WhisperModel
 from app.core.config import Settings
+from app.services.priority import PrioritySlots
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ class InferenceService:
         self._model_factory = model_factory
         self._model: Any | None = None
         self._lifecycle_lock = asyncio.Lock()
-        self._semaphore = asyncio.Semaphore(settings.workers)
+        self._semaphore = PrioritySlots(settings.workers)
         self._executor = ThreadPoolExecutor(max_workers=settings.workers, thread_name_prefix="stt-inference")
         self._pending: set[asyncio.Future] = set()
         self._ready = False
@@ -261,7 +262,7 @@ class InferenceService:
 
     async def transcribe(self, audio: np.ndarray | BytesIO, language: str | None = None,
                          initial_prompt: str | None = None, audio_offset_seconds: float = 0.0,
-                         word_timestamps: bool | None = None) -> TranscriptionResult:
+                         word_timestamps: bool | None = None, priority: int = 1) -> TranscriptionResult:
         if not self.is_ready:
             raise ModelNotReadyError("Speech model is not ready")
         if not math.isfinite(audio_offset_seconds) or audio_offset_seconds < 0:
@@ -278,7 +279,7 @@ class InferenceService:
             word_timestamps = self.settings.word_timestamps
         queue_started = perf_counter()
         try:
-            await asyncio.wait_for(self._semaphore.acquire(), timeout=self.settings.inference_queue_timeout_seconds)
+            await asyncio.wait_for(self._semaphore.acquire(priority), timeout=self.settings.inference_queue_timeout_seconds)
         except asyncio.TimeoutError as exc:
             raise InferenceBusyError("Inference capacity unavailable") from exc
         queue_wait_ms = (perf_counter() - queue_started) * 1000
