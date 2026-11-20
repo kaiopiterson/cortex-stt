@@ -1,8 +1,10 @@
 """CortexLab STT v0.2.0 — application orchestration."""
 import asyncio
 import logging
+from collections.abc import Callable
+from typing import cast
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -63,7 +65,10 @@ def create_app() -> FastAPI:
     
     # Integração do Rate Limiting (SlowAPI)
     application.state.limiter = limiter
-    application.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    application.add_exception_handler(
+        RateLimitExceeded,
+        cast(Callable[[Request, Exception], Response], _rate_limit_exceeded_handler),
+    )
     
     # Registro do router consolidado
     application.add_middleware(BodyLimit)

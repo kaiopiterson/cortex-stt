@@ -8,6 +8,7 @@ from limits.storage import MemoryStorage
 from limits.strategies import FixedWindowRateLimiter
 
 from app.core.limiter import client_ip
+from app.core.registry import AppRegistry
 
 router = APIRouter()
 
@@ -31,11 +32,11 @@ async def issue_token(
     if not limits.test(failure_limit, "failure", ip):
         raise HTTPException(429, "Rate limit exceeded", headers={"Retry-After": "60"})
     scheme, _, key = (authorization or "").partition(" ")
-    registry = getattr(state, "registry", None)
+    registry: AppRegistry | None = getattr(state, "registry", None)
     app_id = None
     if scheme.lower() == "bearer" and registry is not None and key.startswith("stt_") and len(key) == 47:
         app_id = await asyncio.to_thread(registry.identify, key)
-    if app_id is None:
+    if registry is None or app_id is None:
         limits.hit(failure_limit, "failure", ip)
         raise HTTPException(401, "Invalid API credentials", headers={"WWW-Authenticate": "Bearer"})
     if not limits.hit(parse("30/minute"), "issuance", app_id):

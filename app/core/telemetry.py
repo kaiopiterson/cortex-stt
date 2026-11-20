@@ -24,21 +24,21 @@ class Telemetry:
             values[-1] += seconds
 
     def render(self, gauges: dict[str, float]) -> str:
-        lines = []
+        lines: list[str] = []
         with self.lock:
-            for name, value in sorted(self.counters.items()):
-                lines.extend((f"# TYPE {name} counter", f"{name} {value}"))
+            for name, count in sorted(self.counters.items()):
+                lines.extend((f"# TYPE {name} counter", f"{name} {count}"))
             for name, values in sorted(self.histograms.items()):
                 lines.append(f"# TYPE {name} histogram")
-                for bound, value in zip(self.bounds, values):
-                    lines.append(f'{name}_bucket{{le="{bound}"}} {value}')
+                for bound, bucket in zip(self.bounds, values):
+                    lines.append(f'{name}_bucket{{le="{bound}"}} {bucket}')
                 lines.extend((
                     f'{name}_bucket{{le="+Inf"}} {values[-2]}',
                     f"{name}_count {values[-2]}",
                     f"{name}_sum {values[-1]}",
                 ))
-        for name, value in sorted(gauges.items()):
-            lines.extend((f"# TYPE {name} gauge", f"{name} {value}"))
+        for name, gauge in sorted(gauges.items()):
+            lines.extend((f"# TYPE {name} gauge", f"{name} {gauge}"))
         return "\n".join(lines) + "\n"
 
 

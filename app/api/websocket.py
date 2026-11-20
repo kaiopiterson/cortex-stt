@@ -100,7 +100,7 @@ class StreamingSession:
         return self.total_received_samples - self.last_inference_samples >= self.settings.stream_step_samples
 
     def _extract_words(self, result: TranscriptionResult) -> list[TranscriptionWord]:
-        words = []
+        words: list[TranscriptionWord] = []
         for segment in result.segments:
             if segment.words:
                 words.extend(segment.words)
@@ -267,8 +267,9 @@ async def stream_audio(websocket: WebSocket) -> None:
     inference: InferenceService = websocket.app.state.inference_service
     semaphore: asyncio.Semaphore = websocket.app.state.stream_slots
     acquired = False
-    key_slot = None
-    identity = None
+    key_slot: str | None = None
+    counts: dict[str, int] = {}
+    identity: str | None = None
     app_acquired = False
     session = None
     receiver = None
@@ -286,14 +287,17 @@ async def stream_audio(websocket: WebSocket) -> None:
             await websocket_error(websocket, "invalid_handshake", "Expected JSON object", 1003)
             return
         api_key = config.get("api_key")
-        identity = await identify_client(websocket, api_key) if isinstance(api_key, str) else None
-        if identity is None:
+        if not isinstance(api_key, str):
             await websocket_error(websocket, "unauthorized", "Invalid API credentials", 1008)
             return
-        if identity.kind == "permanent":
+        credential = await identify_client(websocket, api_key)
+        if credential is None:
+            await websocket_error(websocket, "unauthorized", "Invalid API credentials", 1008)
+            return
+        if credential.kind == "permanent":
             await websocket_error(websocket, "forbidden_scope", "Forbidden credential scope", 1008)
             return
-        identity = identity.app_id
+        identity = credential.app_id
         if not inference.is_ready:
             await websocket_error(websocket, "model_not_ready", "Inference model is not ready", 1013)
             return
@@ -320,10 +324,11 @@ async def stream_audio(websocket: WebSocket) -> None:
             slots(websocket).acquire(identity, settings.app_concurrency)
             app_acquired = True
         key = "app:" + identity if registered(identity) else stream_client_key(websocket, api_key)
-        counts = getattr(websocket.app.state, "stream_key_counts", None)
-        if counts is None:
-            counts = {}
-            websocket.app.state.stream_key_counts = counts
+        shared_counts: dict[str, int] | None = getattr(websocket.app.state, "stream_key_counts", None)
+        if shared_counts is None:
+            shared_counts = {}
+            websocket.app.state.stream_key_counts = shared_counts
+        counts = shared_counts
         if counts.get(key, 0) >= settings.stream_connections_per_key:
             await websocket_error(websocket, "server_busy", "Connection capacity unavailable", 1013)
             return
@@ -341,7 +346,7 @@ async def stream_audio(websocket: WebSocket) -> None:
             "max_duration_seconds": session.duration_limit, "mode": mode,
             "processing": processing_metadata(settings),
         })
-        queue = asyncio.Queue(maxsize=settings.stream_queue_size)
+        queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=settings.stream_queue_size)
 
         async def receive_frames():
             while True:
