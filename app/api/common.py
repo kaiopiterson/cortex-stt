@@ -45,3 +45,8 @@ async def acquire_session(semaphore: asyncio.Semaphore, timeout: float) -> None:
     except asyncio.TimeoutError as exc:
         raise InferenceBusyError("Maximum concurrent sessions reached") from exc
 
+
+def valid_language(value: str) -> bool:
+    from faster_whisper.tokenizer import _LANGUAGE_CODES
+    return len(value) <= 32 and (value.lower() in {"", "auto"} or
+        value.lower().replace("_", "-").split("-")[0] in _LANGUAGE_CODES)

@@ -1,5 +1,6 @@
 """CortexLab STT v0.2.0 — application orchestration."""
 import asyncio
+import os
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -7,6 +8,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app.api import api_router
+from app.core.body_limit import BodyLimit
 from app.core.config import get_settings
 from app.core.limiter import limiter
 from app.services.inference import InferenceService
@@ -42,14 +44,15 @@ async def lifespan(app: FastAPI):
         logger.info("CortexLab STT stopped")
 
 def create_app() -> FastAPI:
+    production = os.getenv("STT_ENVIRONMENT", "development").lower() == "production"
     application = FastAPI(
         title="CortexLab STT Engine", 
         version="0.2.0",
         description="CortexLab Speech-to-Text Engine. REST and WebSocket transcription API designed for server-side inference and future hybrid edge integration.",
         lifespan=lifespan, 
-        docs_url="/docs", 
-        redoc_url="/redoc", 
-        openapi_url="/openapi.json",
+        docs_url=None if production else "/docs", 
+        redoc_url=None if production else "/redoc", 
+        openapi_url=None if production else "/openapi.json",
     )
     
     # Integração do Rate Limiting (SlowAPI)
@@ -57,6 +60,7 @@ def create_app() -> FastAPI:
     application.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     
     # Registro do router consolidado
+    application.add_middleware(BodyLimit)
     application.include_router(api_router)
     return application
 

@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse
 from app.api.common import (SettingsDependency, InferenceDependency, Authenticated,
-                            acquire_session, processing_metadata)
+                            acquire_session, processing_metadata, valid_language)
 from app.core.limiter import configured_limit, limiter
 from app.services.inference import (AudioDurationError, InvalidAudioError, InferenceBusyError,
                                     ModelNotReadyError, ModelExecutionError)
@@ -50,6 +50,8 @@ async def transcribe_audio(request: Request, response: Response, settings: Setti
                            model: Annotated[str | None, Form()] = None,
                            language: Annotated[str | None, Form()] = None,
                            prompt: Annotated[str | None, Form()] = None) -> dict:
+    if language is not None and not valid_language(language):
+        raise HTTPException(422, "Invalid language")
     if (model or settings.model) not in {settings.model, "whisper-1"}:
         raise HTTPException(400, "Unsupported model")
     if not inference.is_ready:

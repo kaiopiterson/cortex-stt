@@ -7,7 +7,7 @@ import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.core.config import Settings
 from app.core.limiter import client_key
-from app.api.common import acquire_session, processing_metadata, validate_api_key
+from app.api.common import acquire_session, processing_metadata, validate_api_key, valid_language
 from app.services.inference import (AudioDurationError, InferenceBusyError, InferenceService,
     InvalidAudioError, ModelExecutionError, ModelNotReadyError, TranscriptionResult, TranscriptionWord)
 
@@ -229,7 +229,7 @@ async def stream_audio(websocket: WebSocket) -> None:
             await websocket_error(websocket, "model_not_ready", "Inference model is not ready", 1013)
             return
         language = config.get("language", settings.language)
-        if not isinstance(language, str) or len(language) > 32:
+        if not isinstance(language, str) or not valid_language(language):
             await websocket_error(websocket, "invalid_language", "Invalid language configuration", 1008)
             return
         if (config.get("format", "pcm_s16le") != "pcm_s16le"
@@ -249,7 +249,7 @@ async def stream_audio(websocket: WebSocket) -> None:
         key_slot = key
         await acquire_session(semaphore, 0.2)
         acquired = True
-        session = StreamingSession(settings=settings, language=language)
+        session = StreamingSession(settings=settings, language=language.lower())
         started = monotonic()
         await websocket.send_json({
             "type": "ready", "version": settings.app_version, "protocol_version": "1.1",
