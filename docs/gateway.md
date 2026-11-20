@@ -48,3 +48,7 @@ A chave legada mantém limites anteriores. Não é indicada para clientes públi
 REST retorna 429 e WS quota_exceeded/1008 quando limite excedido.
 Concorrência é local ao processo único; não habilitar múltiplos workers Uvicorn.
 Rate limit usa janela fixa UTC, podendo permitir rajadas na virada do minuto.
+
+## Observabilidade
+
+Consulte [observability.md](observability.md) para coleta protegida de métricas e auditoria agregada.
