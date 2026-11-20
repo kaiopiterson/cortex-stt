@@ -1,0 +1,2 @@
+# Diretrizes de engenharia
+Priorize pt-BR, baixa latência, privacidade e arquitetura modular. Preserve compatibilidade de API. Evolua incrementalmente conforme ROADMAP.md. Não altere serviços, portas, túneis ou infraestrutura existente sem autorização. Não publique credenciais, gravações ou transcrições. Diferencie proposta de implementação e resultados medidos. Execute testes de regressão e registre limitações; não declare validação CUDA sem teste real. Mantenha README, ROADMAP, ARCHITECTURE e CHANGELOG atualizados.

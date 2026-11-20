@@ -1,0 +1,2 @@
+# Segurança
+Não versionar segredos, tokens, áudios, transcrições nem configuração real de infraestrutura. Utilize TLS e mantenha portas internas restritas. MVP usa chave compartilhada; não incorporar chave permanente em clientes distribuídos. Antes de exposição pública: limitar duração decodificada, filas, tráfego e sessões, revisar proxy e retenção de logs, adotar credenciais individuais e tokens temporários. Offline deve impedir qualquer envio de áudio. Reporte vulnerabilidades de forma privada ao mantenedor, sem publicar segredos.
