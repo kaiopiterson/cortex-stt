@@ -2,7 +2,7 @@ FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
 LABEL org.opencontainers.image.title="CortexLab STT Engine"
 LABEL org.opencontainers.image.description="CortexLab Speech-to-Text Engine"
-LABEL org.opencontainers.image.version="0.2.0"
+LABEL org.opencontainers.image.version="0.3.0"
 LABEL org.opencontainers.image.source="https://github.com/kaiopiterson/cortex-stt"
 
 ENV DEBIAN_FRONTEND=noninteractive \
