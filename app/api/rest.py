@@ -1,28 +1,31 @@
-"""REST endpoints."""
+"""REST endpoints (CortexLab STT v0.3.0)."""
 
 import asyncio
 import json
 import logging
+import sqlite3
 from io import BytesIO
 from pathlib import Path
 from time import monotonic
 from typing import Annotated
 
-import numpy as np
 from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from app.api.common import (
-    SettingsDependency,
-    InferenceDependency,
     Authenticated,
+    InferenceDependency,
+    SettingsDependency,
     acquire_session,
+    current_admission,
+    parse_hotwords,
     processing_metadata,
     valid_language,
-    parse_hotwords,
 )
+from app.core import telemetry
+from app.core.auth import CredentialStoreUnavailable
+from app.core.gateway import gateway
 from app.core.limiter import configured_limit, limiter
-from app.core.governance import charge, registered, slots
-from app.core.usage import UsageLimit
+from app.core.usage import Reservation, UsageLimit
 from app.services.inference import (
     AudioDurationError,
     InvalidAudioError,
@@ -50,13 +53,36 @@ async def web_interface() -> HTMLResponse:
 
 @router.get("/health", tags=["Health"])
 async def health(settings: SettingsDependency, inference: InferenceDependency) -> dict:
+    """Liveness. In production it reveals no version, model or device."""
+    status = "ok" if inference.is_ready else "initializing"
+    if settings.environment == "production":
+        return {"status": status}
     return {
-        "status": "ok" if inference.is_ready else "initializing",
+        "status": status,
         "ready": inference.is_ready,
         "version": settings.app_version,
         "model": settings.model,
         "device": settings.device,
     }
+
+
+@router.get("/ready", tags=["Health"])
+async def ready(request: Request, inference: InferenceDependency) -> JSONResponse:
+    """Readiness: model loaded and gateway database reachable (used by HEALTHCHECK)."""
+    checks = {"model": bool(inference.is_ready), "database": False}
+    registry = getattr(request.app.state, "registry", None)
+    if registry is not None:
+        try:
+            await asyncio.to_thread(registry.schema_version)
+            checks["database"] = True
+        except sqlite3.Error:
+            logger.warning("Readiness check: database unavailable")
+    is_ready = all(checks.values())
+    return JSONResponse(
+        {"ready": is_ready, "checks": checks},
+        status_code=200 if is_ready else 503,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/v1/models", tags=["Models"])
@@ -106,12 +132,11 @@ async def transcribe_audio(
         raise HTTPException(415, "Unsupported audio content type")
     semaphore = request.app.state.rest_slots
     acquired = False
-    identity = getattr(request.state, "app_identity", None)
-    app_acquired = False
+    admission = current_admission(request)
+    gate = gateway(request)
+    reservation: Reservation | None = None
     try:
-        if identity is not None and registered(identity):
-            slots(request).acquire(identity, settings.app_concurrency)
-            app_acquired = True
+        gate.hold(admission)
         await acquire_session(semaphore, settings.inference_queue_timeout_seconds)
         acquired = True
         started = monotonic()
@@ -120,46 +145,51 @@ async def transcribe_audio(
             raise HTTPException(422, "Empty audio file")
         if len(audio) > settings.max_upload_bytes:
             raise HTTPException(413, "Maximum upload size exceeded")
-        prepared = BytesIO(audio)
-        prepared_audio: np.ndarray | BytesIO
-        if app_acquired:
-            samples = await asyncio.to_thread(inference._prepare_audio, prepared)
-            await charge(request, identity, samples=int(samples.size))
-            prepared_audio = samples
-        else:
-            prepared_audio = prepared
+        samples = await asyncio.to_thread(inference.prepare_audio, BytesIO(audio))
+        reservation = await gate.charge_samples(admission, int(samples.size))
         result = await inference.transcribe(
-            audio=prepared_audio,
+            audio=samples,
             language=language,
             initial_prompt=prompt,
-            priority=0 if mode == "command" else 1,
+            priority=admission.priority(interactive=mode == "command"),
             hotwords=hints,
         )
         payload = result.to_dict()
         payload["needs_review"] = (
-            not result.text.strip() or result.confidence < settings.review_threshold
+            not result.text.strip()
+            or result.confidence < settings.review_threshold
+            or result.filtered_segments > 0
         )
         payload["total_ms"] = round((monotonic() - started) * 1000, 2)
-        payload["processing"] = processing_metadata(settings)
+        payload["processing"] = processing_metadata(settings, inference)
         return payload
     except UsageLimit as exc:
+        telemetry.reject("quota_exceeded")
         raise HTTPException(429, "Application usage limit exceeded") from exc
+    except CredentialStoreUnavailable as exc:
+        telemetry.reject("unavailable")
+        raise HTTPException(
+            503, "Service temporarily unavailable", headers={"Retry-After": "2"}
+        ) from exc
     except AudioDurationError as exc:
         raise HTTPException(413, "Maximum audio duration exceeded") from exc
     except InvalidAudioError as exc:
         raise HTTPException(422, "Invalid or unsupported audio") from exc
     except InferenceBusyError as exc:
+        gate.refund(reservation)
+        telemetry.reject("server_busy")
         raise HTTPException(
             503, "Inference capacity unavailable", headers={"Retry-After": "2"}
         ) from exc
     except ModelNotReadyError as exc:
+        gate.refund(reservation)
         raise HTTPException(503, "Inference model is not ready") from exc
     except ModelExecutionError as exc:
+        gate.refund(reservation)
         logger.error("REST inference execution failed")
         raise HTTPException(500, "Transcription failed") from exc
     finally:
         if acquired:
             semaphore.release()
-        if app_acquired and identity is not None:
-            slots(request).release(identity)
+        gate.release(admission)
         await file.close()

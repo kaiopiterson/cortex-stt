@@ -1,4 +1,4 @@
-"""WebSocket streaming and per-session state."""
+"""WebSocket streaming and per-session state (CortexLab STT v0.3.0)."""
 
 import asyncio
 import logging
@@ -7,10 +7,10 @@ from time import monotonic
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.core.config import Settings
-from app.core.auth import identify_client
-from app.core.governance import charge, registered, slots
-from app.core.usage import UsageLimit
-from app.core.limiter import stream_client_key
+from app.core import telemetry
+from app.core.auth import CredentialStoreUnavailable, Identity, identify_client
+from app.core.gateway import Admission, gateway
+from app.core.usage import UsageLimit, scope_key
 from app.api.common import acquire_session, processing_metadata, valid_language, parse_hotwords
 from app.services.inference import (
     AudioDurationError,
@@ -43,6 +43,9 @@ class StreamingSession:
     last_inference_samples: int = 0
     committed_until_seconds: float = 0.0
     revision: int = 0
+    priority_rank: int = 1
+    filtered_segments: int = 0
+    inference: object | None = None
 
     @property
     def duration_limit(self) -> int:
@@ -185,6 +188,7 @@ class StreamingSession:
             "revision": self.revision,
             "confidence": self.confidence,
             "needs_review": self.audio_skipped
+            or self.filtered_segments > 0
             or not self.full_text
             or self.confidence < self.settings.review_threshold,
             "audio_duration_seconds": round(self.audio_duration_seconds, 3),
@@ -193,7 +197,7 @@ class StreamingSession:
                 {"start": w.start, "end": w.end, "text": w.text}
                 for w in self.committed_words + self.provisional_words
             ],
-            "processing": processing_metadata(self.settings),
+            "processing": processing_metadata(self.settings, self.inference),
         }
         if result is not None:
             payload.update(
@@ -223,9 +227,11 @@ async def process_window(
         language=session.language,
         previous_text=session.previous_text,
         hotwords=session.hotwords,
+        priority=session.priority_rank * 2 + 1,
     )
     if result.language:
         session.language = result.language
+    session.filtered_segments += result.filtered_segments
     session.apply_result(result, window_end, confirmation_limit_samples, final)
     session.last_inference_samples = max(session.last_inference_samples, window_end)
     return result
@@ -279,10 +285,11 @@ async def finalize_stream(
             audio=session.get_pcm(),
             language=session.language,
             word_timestamps=True,
-            priority=0,
+            priority=session.priority_rank * 2,
             hotwords=session.hotwords,
         )
         session.language = result.language
+        session.filtered_segments += result.filtered_segments
         session.apply_result(
             result, session.total_received_samples, session.total_received_samples, final=True
         )
@@ -316,7 +323,27 @@ async def next_frame(queue, receiver, timeout):
         await asyncio.gather(pending, return_exceptions=True)
 
 
+def credit_unprocessed(gate, admission: Admission | None, session) -> None:
+    """Refund audio charged to the client but never transcribed due to a server failure."""
+    if session is None:
+        return
+    unprocessed = session.total_received_samples - session.last_inference_samples
+    gate.credit_samples(admission, max(0, unprocessed))
+
+
+ERROR_REASONS = {
+    "unauthorized": "unauthorized",
+    "forbidden_scope": "forbidden_scope",
+    "quota_exceeded": "quota_exceeded",
+    "server_busy": "server_busy",
+}
+
+
 async def websocket_error(websocket: WebSocket, code: str, message: str, close_code: int) -> None:
+    if code in ERROR_REASONS:
+        telemetry.reject(ERROR_REASONS[code])
+    if code == "unauthorized":
+        telemetry.auth_failed("websocket")
     try:
         await websocket.send_json({"type": "error", "code": code, "message": message})
         await websocket.close(code=close_code)
@@ -332,8 +359,9 @@ async def stream_audio(websocket: WebSocket) -> None:
     acquired = False
     key_slot: str | None = None
     counts: dict[str, int] = {}
-    identity: str | None = None
-    app_acquired = False
+    credential: Identity | None = None
+    admission: Admission | None = None
+    gate = gateway(websocket)
     session = None
     receiver = None
     await websocket.accept()
@@ -359,14 +387,17 @@ async def stream_audio(websocket: WebSocket) -> None:
         if not isinstance(api_key, str):
             await websocket_error(websocket, "unauthorized", "Invalid API credentials", 1008)
             return
-        credential = await identify_client(websocket, api_key)
+        try:
+            credential = await identify_client(websocket, api_key)
+        except CredentialStoreUnavailable:
+            await websocket_error(websocket, "server_busy", "Service temporarily unavailable", 1013)
+            return
         if credential is None:
             await websocket_error(websocket, "unauthorized", "Invalid API credentials", 1008)
             return
         if credential.kind == "permanent":
             await websocket_error(websocket, "forbidden_scope", "Forbidden credential scope", 1008)
             return
-        identity = credential.app_id
         if not inference.is_ready:
             await websocket_error(
                 websocket, "model_not_ready", "Inference model is not ready", 1013
@@ -399,11 +430,8 @@ async def stream_audio(websocket: WebSocket) -> None:
         except ValueError:
             await websocket_error(websocket, "invalid_hotwords", "Invalid hotwords", 1008)
             return
-        await charge(websocket, identity, requests=1)
-        if registered(identity):
-            slots(websocket).acquire(identity, settings.app_concurrency)
-            app_acquired = True
-        key = "app:" + identity if registered(identity) else stream_client_key(websocket, api_key)
+        admission = await gate.admit(credential, hold_slot=True)
+        key = "app:" + scope_key(credential.app_id, credential.subject)
         shared_counts: dict[str, int] | None = getattr(
             websocket.app.state, "stream_key_counts", None
         )
@@ -418,8 +446,16 @@ async def stream_audio(websocket: WebSocket) -> None:
         key_slot = key
         await acquire_session(semaphore, 0.2)
         acquired = True
+        telemetry.stream_sessions.labels(mode).inc()
+        first_audio_at: float | None = None
+        partial_sent = False
         session = StreamingSession(
-            settings=settings, language=language.lower(), mode=mode, hotwords=hints
+            settings=settings,
+            language=language.lower(),
+            mode=mode,
+            hotwords=hints,
+            priority_rank=admission.priority(interactive=True) // 2,
+            inference=inference,
         )
         started = monotonic()
         await websocket.send_json(
@@ -435,7 +471,7 @@ async def stream_audio(websocket: WebSocket) -> None:
                 "confirmation_margin_seconds": settings.stream_overlap_seconds,
                 "max_duration_seconds": session.duration_limit,
                 "mode": mode,
-                "processing": processing_metadata(settings),
+                "processing": processing_metadata(settings, inference),
             }
         )
         queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=settings.stream_queue_size)
@@ -456,9 +492,14 @@ async def stream_audio(websocket: WebSocket) -> None:
             nonlocal checked_at
             if not force and monotonic() - checked_at < 1.0:
                 return True
-            current = await identify_client(websocket, api_key, active_session=True)
+            try:
+                current = await identify_client(websocket, api_key, active_session=True)
+            except CredentialStoreUnavailable:
+                # Keep an authenticated session alive during a brief database outage.
+                logger.warning("Session revalidation deferred: credential store unavailable")
+                return True
             checked_at = monotonic()
-            if current is None or current.app_id != identity:
+            if current is None or credential is None or current.app_id != credential.app_id:
                 await websocket_error(websocket, "unauthorized", "Invalid API credentials", 1008)
                 return False
             return True
@@ -514,10 +555,12 @@ async def stream_audio(websocket: WebSocket) -> None:
             command = message.get("text")
             if command is not None:
                 if command == "finish":
+                    finish_at = monotonic()
                     result = await finalize_stream(session, inference)
                     if not await authorized(force=True):
                         return
                     await websocket.send_json(session.event_payload("final", result))
+                    telemetry.stream_final_latency.labels(mode).observe(monotonic() - finish_at)
                     await websocket.close(code=1000)
                     return
                 if command == "ping":
@@ -531,7 +574,7 @@ async def stream_audio(websocket: WebSocket) -> None:
             if not chunk:
                 continue
             try:
-                await charge(websocket, identity, samples=len(chunk) // settings.sample_width_bytes)
+                await gate.charge_samples(admission, len(chunk) // settings.sample_width_bytes)
             except UsageLimit:
                 result = await finalize_stream(session, inference)
                 if await authorized(force=True):
@@ -541,6 +584,8 @@ async def stream_audio(websocket: WebSocket) -> None:
                     await websocket.close(code=1000)
                 return
             session.append_audio(chunk)
+            if first_audio_at is None:
+                first_audio_at = monotonic()
             if session.mode == "utterance":
                 continue
             # Drain already queued audio without reordering control messages.
@@ -553,10 +598,8 @@ async def stream_audio(websocket: WebSocket) -> None:
                     deferred = queued
                     break
                 try:
-                    await charge(
-                        websocket,
-                        identity,
-                        samples=len(queued["bytes"]) // settings.sample_width_bytes,
+                    await gate.charge_samples(
+                        admission, len(queued["bytes"]) // settings.sample_width_bytes
                     )
                 except UsageLimit:
                     result = await finalize_stream(session, inference)
@@ -569,6 +612,7 @@ async def stream_audio(websocket: WebSocket) -> None:
                 session.append_audio(queued["bytes"])
             skipped = trim_backlog(session)
             if skipped:
+                telemetry.reject("lagging")
                 await websocket.send_json(
                     {
                         "type": "warning",
@@ -581,6 +625,7 @@ async def stream_audio(websocket: WebSocket) -> None:
                 busy_failures = 0
             except InferenceBusyError:
                 busy_failures += 1
+                telemetry.reject("server_busy")
                 await websocket.send_json({"type": "warning", "code": "server_busy"})
                 if busy_failures >= settings.stream_busy_failures:
                     raise
@@ -589,6 +634,9 @@ async def stream_audio(websocket: WebSocket) -> None:
                 if not await authorized():
                     return
                 await websocket.send_json(session.event_payload("partial", latest))
+                if not partial_sent and first_audio_at is not None:
+                    partial_sent = True
+                    telemetry.stream_first_partial.observe(monotonic() - first_audio_at)
     except UsageLimit:
         await websocket_error(websocket, "quota_exceeded", "Application usage limit exceeded", 1008)
     except WebSocketDisconnect:
@@ -597,16 +645,22 @@ async def stream_audio(websocket: WebSocket) -> None:
         await websocket_error(websocket, "duration_limit", "Maximum audio duration exceeded", 1009)
     except InvalidAudioError:
         await websocket_error(websocket, "invalid_audio", "Invalid PCM audio", 1003)
+    except CredentialStoreUnavailable:
+        await websocket_error(websocket, "server_busy", "Service temporarily unavailable", 1013)
     except InferenceBusyError:
+        credit_unprocessed(gate, admission, session)
         await websocket_error(websocket, "server_busy", "Inference capacity unavailable", 1013)
     except ModelNotReadyError:
+        credit_unprocessed(gate, admission, session)
         await websocket_error(websocket, "model_not_ready", "Inference model is not ready", 1013)
     except ModelExecutionError:
+        credit_unprocessed(gate, admission, session)
         logger.error("Streaming inference execution failed")
         await websocket_error(websocket, "inference_error", "Transcription failed", 1011)
     except OSError:
         logger.debug("Streaming transport interrupted")
     except Exception:
+        credit_unprocessed(gate, admission, session)
         logger.exception("Unexpected streaming failure")
         await websocket_error(websocket, "internal_error", "Streaming failed", 1011)
     finally:
@@ -623,5 +677,4 @@ async def stream_audio(websocket: WebSocket) -> None:
                 del counts[key_slot]
         if acquired:
             semaphore.release()
-        if app_acquired and identity is not None:
-            slots(websocket).release(identity)
+        gate.release(admission)

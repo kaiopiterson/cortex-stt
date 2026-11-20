@@ -1,7 +1,9 @@
-"""Limit upload bodies before multipart parsing."""
+"""Authenticate and bound request bodies before parsing (CortexLab STT v0.3.0)."""
 
-from app.core.auth import identify_client
+from app.core import telemetry
+from app.core.auth import CredentialStoreUnavailable, identify_client
 from app.api.admin import require_admin
+from app.api.metrics import require_metrics
 from starlette.requests import Request
 from limits import parse
 from limits.storage import MemoryStorage
@@ -23,22 +25,42 @@ class BodyLimit:
             return
         settings = scope["app"].state.settings
         path = scope["path"]
-        if path in {"/admin", "/metrics", "/v1/admin"} or path.startswith("/v1/admin/"):
+        # Operational routes are authenticated before any body is read.
+        guard = None
+        if path == "/metrics":
+            guard = require_metrics
+        elif path == "/v1/admin" or path.startswith("/v1/admin/"):
+            guard = require_admin
+        if guard is not None:
             try:
-                await require_admin(
-                    Request(scope), HTTPConnection(scope).headers.get("Authorization")
-                )
+                await guard(Request(scope), HTTPConnection(scope).headers.get("Authorization"))
             except HTTPException as exc:
+                if exc.status_code == 401:
+                    telemetry.auth_failed("metrics" if path == "/metrics" else "admin")
                 await JSONResponse(
                     {"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers
                 )(scope, receive, send)
                 return
         connection = HTTPConnection(scope)
         scheme, _, token = connection.headers.get("Authorization", "").partition(" ")
-        if path == "/v1/audio/transcriptions" and (
-            scheme.lower() != "bearer" or not await identify_client(connection, token)
-        ):
+        identity = None
+        if path == "/v1/audio/transcriptions" and scheme.lower() == "bearer":
+            try:
+                identity = await identify_client(connection, token)
+            except CredentialStoreUnavailable:
+                telemetry.reject("unavailable")
+                await JSONResponse(
+                    {"detail": "Service temporarily unavailable"},
+                    status_code=503,
+                    headers={"Retry-After": "2"},
+                )(scope, receive, send)
+                return
+            # Reused by the route dependency: one credential lookup per request.
+            connection.state.identity = identity
+        if path == "/v1/audio/transcriptions" and identity is None:
             allowed = self.unauthorized.hit(parse("60/minute"), client_ip(connection))
+            telemetry.auth_failed("rest")
+            telemetry.reject("unauthorized" if allowed else "rate_limited")
             response = JSONResponse(
                 {"detail": "Invalid API credentials" if allowed else "Rate limit exceeded"},
                 status_code=401 if allowed else 429,
@@ -47,6 +69,7 @@ class BodyLimit:
             await response(scope, receive, send)
             return
         if path == "/v1/audio/transcriptions" and token.startswith("stt_"):
+            telemetry.reject("forbidden_scope")
             await JSONResponse({"detail": "Forbidden credential scope"}, status_code=403)(
                 scope, receive, send
             )

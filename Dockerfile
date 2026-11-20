@@ -1,6 +1,7 @@
-FROM ghcr.io/astral-sh/uv:0.11.32 AS uv
+# Base images pinned by digest (AUD-22); update tag and digest together.
+FROM ghcr.io/astral-sh/uv:0.11.32@sha256:df4cae8f3a96d175e2e5f992e597550000edbe78fdc2594d5cd8de1a217f504c AS uv
 
-FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04@sha256:2fcc4280646484290cc50dce5e65f388dd04352b07cbe89a635703bd1f9aedb6
 
 LABEL org.opencontainers.image.title="CortexLab STT Engine"
 LABEL org.opencontainers.image.description="CortexLab Speech-to-Text Engine"
@@ -48,6 +49,6 @@ USER appuser
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=300s --retries=3 \
-    CMD python3 -c "import json, urllib.request; response = urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3); assert json.load(response)['ready'] is True" || exit 1
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)" || exit 1
 
-CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--ws-max-size", "2097152", "--ws-max-queue", "8", "--timeout-graceful-shutdown", "30"]
+CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--ws-max-size", "2097152", "--ws-max-queue", "8", "--timeout-graceful-shutdown", "30", "--no-access-log"]

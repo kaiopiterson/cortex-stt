@@ -11,7 +11,9 @@ from app.core.registry import AppRegistry
 
 def test_exchange_http(tmp_path):
     app = FastAPI()
-    app.state.settings = Settings(api_key="x" * 40, device="cpu", compute="int8")
+    app.state.settings = Settings(
+        api_key="x" * 40, device="cpu", compute="int8", token_issuance_per_minute=30
+    )
     app.state.registry = AppRegistry(str(tmp_path / "registry.db"))
     app.state.registry.initialize()
     app_id, key = app.state.registry.register("Ritmo")
