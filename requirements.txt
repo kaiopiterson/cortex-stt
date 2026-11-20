@@ -1,12 +1,13 @@
-fastapi==0.115.12
+fastapi>=0.116.1,<1
+starlette>=0.47.2
 uvicorn[standard]==0.34.2
 faster-whisper==1.1.1
-python-multipart==0.0.20
+python-multipart>=0.0.31
 numpy<2
 websockets
 slowapi==0.1.9
 pydantic-settings>=2.8,<3
-requests==2.32.5
+requests>=2.33.0
 huggingface-hub==0.30.2
 ctranslate2==4.6.0
 av==14.2.0

@@ -8,6 +8,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python: ['3.10', '3.11']
     steps:
@@ -36,3 +37,21 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build -t cortex-stt:ci .
       - run: docker run --rm --entrypoint python3 cortex-stt:ci -c 'import faster_whisper, av, ctranslate2'
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install pip-tools pip-audit
+      - run: pip-compile --generate-hashes --output-file=requirements.lock requirements.txt
+      - run: pip-compile --generate-hashes --output-file=requirements-dev.lock requirements-dev.txt
+      - run: pip-audit -r requirements.lock --require-hashes
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dependency-locks
+          path: |
+            requirements.lock
+            requirements-dev.lock
