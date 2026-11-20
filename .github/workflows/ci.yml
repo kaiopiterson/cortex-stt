@@ -31,10 +31,26 @@ jobs:
 
   docker-build:
     runs-on: ubuntu-latest
+    env:
+      TRIVY_IMAGE: aquasec/trivy:0.72.0
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t cortex-stt:ci .
-      - run: docker run --rm --entrypoint python3 cortex-stt:ci -c 'import faster_whisper, av, ctranslate2'
+      - run: docker run --rm --entrypoint python3 cortex-stt:ci -c 'import faster_whisper, av, ctranslate2, prometheus_client'
+      - name: Report pinned base image digests
+        run: |
+          for image in $(grep -E '^FROM ' Dockerfile | awk '{print $2}'); do
+            docker image inspect --format '{{.RepoTags}} {{index .RepoDigests 0}}' "$image"
+          done
+      # Trivy runs from its official image pinned by version (and digest once known),
+      # never through the trivy-action/setup-trivy tags compromised in March 2026.
+      - name: Scan image with Trivy (fail on fixable CRITICAL)
+        run: |
+          docker pull "$TRIVY_IMAGE"
+          docker image inspect --format 'trivy {{index .RepoDigests 0}}' "$TRIVY_IMAGE"
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" \
+            image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 \
+            --no-progress cortex-stt:ci
 
   dependency-audit:
     runs-on: ubuntu-latest
