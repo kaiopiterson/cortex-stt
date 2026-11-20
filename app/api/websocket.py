@@ -6,7 +6,7 @@ from time import monotonic
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.core.config import Settings
-from app.core.limiter import client_key
+from app.core.limiter import stream_client_key
 from app.api.common import acquire_session, processing_metadata, validate_api_key, valid_language
 from app.services.inference import (AudioDurationError, InferenceBusyError, InferenceService,
     InvalidAudioError, ModelExecutionError, ModelNotReadyError, TranscriptionResult, TranscriptionWord)
@@ -238,7 +238,7 @@ async def stream_audio(websocket: WebSocket) -> None:
                 or config.get("channels", settings.channels) != settings.channels):
             await websocket_error(websocket, "unsupported_audio_format", "Expected PCM signed 16-bit little-endian, 16 kHz, mono", 1003)
             return
-        key = client_key(websocket, api_key)
+        key = stream_client_key(websocket, api_key)
         counts = getattr(websocket.app.state, "stream_key_counts", None)
         if counts is None:
             counts = {}
