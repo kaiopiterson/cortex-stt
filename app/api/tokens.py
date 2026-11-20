@@ -9,8 +9,12 @@ from app.core.limiter import client_ip, limiter
 router = APIRouter()
 
 
+def token_rate_key(request: Request) -> str:
+    return client_ip(request)
+
+
 @router.post("/v1/auth/token")
-@limiter.limit("30/minute", key_func=client_ip)
+@limiter.limit("30/minute", key_func=token_rate_key)
 async def issue_token(
     request: Request,
     response: Response,
