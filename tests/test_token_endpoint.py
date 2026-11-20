@@ -32,11 +32,17 @@ def test_exchange_http(tmp_path):
                 )
                 assert response.status_code == 401
             for _ in range(29):
-                assert client.post(
+                assert (
+                    client.post(
+                        "/v1/auth/token", headers={"Authorization": f"Bearer {key}"}
+                    ).status_code
+                    == 200
+                )
+            assert (
+                client.post(
                     "/v1/auth/token", headers={"Authorization": f"Bearer {key}"}
-                ).status_code == 200
-            assert client.post(
-                "/v1/auth/token", headers={"Authorization": f"Bearer {key}"}
-            ).status_code == 429
+                ).status_code
+                == 429
+            )
     finally:
         limiter.reset()

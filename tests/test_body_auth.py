@@ -11,8 +11,13 @@ from app.core.config import Settings
 async def test_unauthenticated_upload_never_reads_body():
     settings = Settings(api_key="x" * 40, device="cpu", compute="int8")
     app = SimpleNamespace(state=SimpleNamespace(settings=settings))
-    scope = {"type": "http", "path": "/v1/audio/transcriptions",
-             "app": app, "headers": [], "client": ("192.0.2.1", 1234)}
+    scope = {
+        "type": "http",
+        "path": "/v1/audio/transcriptions",
+        "app": app,
+        "headers": [],
+        "client": ("192.0.2.1", 1234),
+    }
     downstream = AsyncMock()
     receive = AsyncMock()
     send = AsyncMock()

@@ -1,4 +1,5 @@
 """Manual HTTP latency benchmark."""
+
 import argparse
 import asyncio
 import math

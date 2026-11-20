@@ -1,4 +1,5 @@
 """Isolated speech inference service for CortexLab STT v0.2.0."""
+
 import asyncio
 import logging
 import math
@@ -101,13 +102,17 @@ class TranscriptionResult:
 
 
 class InferenceService:
-    def __init__(self, settings: Settings, model_factory: Callable[..., Any] = WhisperModel) -> None:
+    def __init__(
+        self, settings: Settings, model_factory: Callable[..., Any] = WhisperModel
+    ) -> None:
         self.settings = settings
         self._model_factory = model_factory
         self._model: Any | None = None
         self._lifecycle_lock = asyncio.Lock()
         self._semaphore = PrioritySlots(settings.workers)
-        self._executor = ThreadPoolExecutor(max_workers=settings.workers, thread_name_prefix="stt-inference")
+        self._executor = ThreadPoolExecutor(
+            max_workers=settings.workers, thread_name_prefix="stt-inference"
+        )
         self._pending: set[asyncio.Future] = set()
         self._ready = False
         self._closed = False
@@ -122,8 +127,13 @@ class InferenceService:
                 return
             if self._closed:
                 raise ModelNotReadyError("Inference service is closed")
-            logger.info("Loading STT model: model=%s device=%s compute=%s workers=%s",
-                        self.settings.model, self.settings.device, self.settings.compute, self.settings.workers)
+            logger.info(
+                "Loading STT model: model=%s device=%s compute=%s workers=%s",
+                self.settings.model,
+                self.settings.device,
+                self.settings.compute,
+                self.settings.workers,
+            )
             started = perf_counter()
             loop = asyncio.get_running_loop()
             load_job = loop.run_in_executor(self._executor, self._load_model)
@@ -144,13 +154,20 @@ class InferenceService:
 
     def _load_model(self) -> Any:
         try:
-            supported_types = ctranslate2.get_supported_compute_types(self.settings.device, self.settings.device_index)
+            supported_types = ctranslate2.get_supported_compute_types(
+                self.settings.device, self.settings.device_index
+            )
             if self.settings.compute not in supported_types:
-                raise ModelLoadError("Configured compute type is not supported by the selected device")
+                raise ModelLoadError(
+                    "Configured compute type is not supported by the selected device"
+                )
             return self._model_factory(
-                self.settings.model, device=self.settings.device,
-                device_index=self.settings.device_index, compute_type=self.settings.compute,
-                cpu_threads=self.settings.cpu_threads, num_workers=self.settings.workers,
+                self.settings.model,
+                device=self.settings.device,
+                device_index=self.settings.device_index,
+                compute_type=self.settings.compute,
+                cpu_threads=self.settings.cpu_threads,
+                num_workers=self.settings.workers,
                 download_root=self.settings.model_cache_dir,
             )
         except (RuntimeError, ValueError, OSError, ImportError) as exc:
@@ -222,18 +239,30 @@ class InferenceService:
             raise InvalidAudioError("Audio contains invalid numeric samples")
         return np.clip(samples, -1.0, 1.0)
 
-    def _transcribe_sync(self, audio: np.ndarray | BytesIO, language: str | None,
-                         initial_prompt: str | None, audio_offset_seconds: float,
-                         queue_wait_ms: float, word_timestamps: bool, model: Any, hotwords: str | None = None) -> TranscriptionResult:
+    def _transcribe_sync(
+        self,
+        audio: np.ndarray | BytesIO,
+        language: str | None,
+        initial_prompt: str | None,
+        audio_offset_seconds: float,
+        queue_wait_ms: float,
+        word_timestamps: bool,
+        model: Any,
+        hotwords: str | None = None,
+    ) -> TranscriptionResult:
         started = perf_counter()
         samples = self._prepare_audio(audio)
         audio_duration = samples.size / self.settings.sample_rate
         try:
             segments, info = model.transcribe(
-                samples, language=language, initial_prompt=initial_prompt, hotwords=hotwords,
+                samples,
+                language=language,
+                initial_prompt=initial_prompt,
+                hotwords=hotwords,
                 beam_size=self.settings.beam_size,
                 condition_on_previous_text=self.settings.condition_on_previous_text,
-                word_timestamps=word_timestamps, vad_filter=self.settings.vad_enabled,
+                word_timestamps=word_timestamps,
+                vad_filter=self.settings.vad_enabled,
                 vad_parameters={
                     "threshold": self.settings.vad_threshold,
                     "min_silence_duration_ms": self.settings.vad_min_silence_ms,
@@ -243,24 +272,34 @@ class InferenceService:
             result_segments = []
             # Consume the lazy generator inside the dedicated executor.
             for segment in segments:
-                words = tuple(TranscriptionWord(
-                    start=round(word.start + audio_offset_seconds, 3),
-                    end=round(word.end + audio_offset_seconds, 3),
-                    text=word.word, probability=float(word.probability),
-                ) for word in (segment.words or []))
-                result_segments.append(TranscriptionSegment(
-                    start=round(segment.start + audio_offset_seconds, 3),
-                    end=round(segment.end + audio_offset_seconds, 3),
-                    text=segment.text, avg_logprob=float(segment.avg_logprob),
-                    no_speech_prob=float(segment.no_speech_prob), words=words,
-                ))
+                words = tuple(
+                    TranscriptionWord(
+                        start=round(word.start + audio_offset_seconds, 3),
+                        end=round(word.end + audio_offset_seconds, 3),
+                        text=word.word,
+                        probability=float(word.probability),
+                    )
+                    for word in (segment.words or [])
+                )
+                result_segments.append(
+                    TranscriptionSegment(
+                        start=round(segment.start + audio_offset_seconds, 3),
+                        end=round(segment.end + audio_offset_seconds, 3),
+                        text=segment.text,
+                        avg_logprob=float(segment.avg_logprob),
+                        no_speech_prob=float(segment.no_speech_prob),
+                        words=words,
+                    )
+                )
         except (RuntimeError, ValueError, OSError, av.error.FFmpegError) as exc:
             raise ModelExecutionError("Speech inference execution failed") from exc
         return TranscriptionResult(
             text="".join(segment.text for segment in result_segments).strip(),
-            segments=tuple(result_segments), language=info.language,
+            segments=tuple(result_segments),
+            language=info.language,
             language_probability=float(info.language_probability),
-            model=self.settings.model, device=self.settings.device,
+            model=self.settings.model,
+            device=self.settings.device,
             audio_duration_seconds=round(audio_duration, 4),
             processing_ms=round((perf_counter() - started) * 1000, 2),
             queue_wait_ms=round(queue_wait_ms, 2),
@@ -282,14 +321,21 @@ class InferenceService:
         if not job.cancelled():
             if job.exception() is None:
                 result = job.result()
-                telemetry.increment('stt_inference_success_total')
-                telemetry.observe('stt_inference_duration_seconds', result.processing_ms / 1000)
+                telemetry.increment("stt_inference_success_total")
+                telemetry.observe("stt_inference_duration_seconds", result.processing_ms / 1000)
             else:
-                telemetry.increment('stt_inference_failure_total')
+                telemetry.increment("stt_inference_failure_total")
 
-    async def transcribe(self, audio: np.ndarray | BytesIO, language: str | None = None,
-                         initial_prompt: str | None = None, audio_offset_seconds: float = 0.0,
-                         word_timestamps: bool | None = None, priority: int = 1, hotwords: str | None = None) -> TranscriptionResult:
+    async def transcribe(
+        self,
+        audio: np.ndarray | BytesIO,
+        language: str | None = None,
+        initial_prompt: str | None = None,
+        audio_offset_seconds: float = 0.0,
+        word_timestamps: bool | None = None,
+        priority: int = 1,
+        hotwords: str | None = None,
+    ) -> TranscriptionResult:
         if not self.is_ready:
             raise ModelNotReadyError("Speech model is not ready")
         if not math.isfinite(audio_offset_seconds) or audio_offset_seconds < 0:
@@ -301,12 +347,19 @@ class InferenceService:
         elif language:
             language = language.lower().replace("_", "-").split("-")[0]
         if initial_prompt:
-            initial_prompt = initial_prompt[-self.settings.max_prompt_chars:] if self.settings.max_prompt_chars else None
+            initial_prompt = (
+                initial_prompt[-self.settings.max_prompt_chars :]
+                if self.settings.max_prompt_chars
+                else None
+            )
         if word_timestamps is None:
             word_timestamps = self.settings.word_timestamps
         queue_started = perf_counter()
         try:
-            await asyncio.wait_for(self._semaphore.acquire(priority), timeout=self.settings.inference_queue_timeout_seconds)
+            await asyncio.wait_for(
+                self._semaphore.acquire(priority),
+                timeout=self.settings.inference_queue_timeout_seconds,
+            )
         except asyncio.TimeoutError as exc:
             from app.core.telemetry import telemetry
 
@@ -315,15 +368,24 @@ class InferenceService:
         queue_wait_ms = (perf_counter() - queue_started) * 1000
         from app.core.telemetry import telemetry
 
-        telemetry.observe('stt_queue_wait_seconds', queue_wait_ms / 1000)
+        telemetry.observe("stt_queue_wait_seconds", queue_wait_ms / 1000)
         if not self.is_ready:
             self._semaphore.release()
             raise ModelNotReadyError("Inference service is stopping")
         loop = asyncio.get_running_loop()
         try:
-            job = loop.run_in_executor(self._executor, self._transcribe_sync, audio, language,
-                                       initial_prompt, audio_offset_seconds, queue_wait_ms,
-                                       word_timestamps, self._model, hotwords)
+            job = loop.run_in_executor(
+                self._executor,
+                self._transcribe_sync,
+                audio,
+                language,
+                initial_prompt,
+                audio_offset_seconds,
+                queue_wait_ms,
+                word_timestamps,
+                self._model,
+                hotwords,
+            )
         except RuntimeError as exc:
             self._semaphore.release()
             raise ModelExecutionError("Inference executor is unavailable") from exc
@@ -332,14 +394,23 @@ class InferenceService:
         # Keep the GPU slot until native computation actually finishes.
         return await asyncio.shield(job)
 
-    async def transcribe_window(self, pcm: np.ndarray, offset_samples: int,
-                                language: str | None = None, previous_text: str | None = None, hotwords: str | None = None) -> TranscriptionResult:
+    async def transcribe_window(
+        self,
+        pcm: np.ndarray,
+        offset_samples: int,
+        language: str | None = None,
+        previous_text: str | None = None,
+        hotwords: str | None = None,
+    ) -> TranscriptionResult:
         if offset_samples < 0:
             raise ValueError("Audio offset cannot be negative")
         if pcm.size > self.settings.stream_window_samples:
             raise InvalidAudioError("Audio exceeds maximum streaming window")
         return await self.transcribe(
-            audio=pcm, language=language, initial_prompt=previous_text,
+            audio=pcm,
+            language=language,
+            initial_prompt=previous_text,
             audio_offset_seconds=offset_samples / self.settings.sample_rate,
-            word_timestamps=True, hotwords=hotwords,
+            word_timestamps=True,
+            hotwords=hotwords,
         )

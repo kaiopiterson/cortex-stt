@@ -1,4 +1,5 @@
 """Shared authentication for REST and streaming."""
+
 import asyncio
 import secrets
 from dataclasses import dataclass
@@ -12,10 +13,12 @@ from app.core.registry import AppRegistry
 @dataclass(frozen=True)
 class Identity:
     app_id: str
-    kind: Literal['legacy', 'permanent', 'token']
+    kind: Literal["legacy", "permanent", "token"]
 
 
-async def identify_client(connection: HTTPConnection, key: str | None, *, active_session: bool = False) -> Identity | None:
+async def identify_client(
+    connection: HTTPConnection, key: str | None, *, active_session: bool = False
+) -> Identity | None:
     if not key or len(key) > 4096:
         return None
     settings = connection.app.state.settings

@@ -1,4 +1,5 @@
 """Bounded-cardinality, process-local Prometheus instrumentation."""
+
 from threading import Lock
 
 
@@ -32,11 +33,13 @@ class Telemetry:
                 lines.append(f"# TYPE {name} histogram")
                 for bound, bucket in zip(self.bounds, values):
                     lines.append(f'{name}_bucket{{le="{bound}"}} {bucket}')
-                lines.extend((
-                    f'{name}_bucket{{le="+Inf"}} {values[-2]}',
-                    f"{name}_count {values[-2]}",
-                    f"{name}_sum {values[-1]}",
-                ))
+                lines.extend(
+                    (
+                        f'{name}_bucket{{le="+Inf"}} {values[-2]}',
+                        f"{name}_count {values[-2]}",
+                        f"{name}_sum {values[-1]}",
+                    )
+                )
         for name, gauge in sorted(gauges.items()):
             lines.extend((f"# TYPE {name} gauge", f"{name} {gauge}"))
         return "\n".join(lines) + "\n"

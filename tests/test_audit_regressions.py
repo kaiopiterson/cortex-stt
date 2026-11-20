@@ -3,6 +3,7 @@
 Estes testes descrevem o comportamento CORRETO esperado. No commit dd23a3b
 todos falham; devem passar após as correções. Não remova nem enfraqueça.
 """
+
 import asyncio
 import time
 from unittest.mock import AsyncMock, Mock
@@ -43,9 +44,16 @@ def build(tmp_path, **overrides):
     app.state.limiter = limiter
     segment = TranscriptionSegment(0.0, 0.5, " olá", -0.1, 0.01)
     result = TranscriptionResult(
-        text="olá", segments=(segment,), language="pt", language_probability=1.0,
-        model="small", device="cpu", audio_duration_seconds=0.5, processing_ms=5,
-        queue_wait_ms=0, audio_offset_seconds=0,
+        text="olá",
+        segments=(segment,),
+        language="pt",
+        language_probability=1.0,
+        model="small",
+        device="cpu",
+        audio_duration_seconds=0.5,
+        processing_ms=5,
+        queue_wait_ms=0,
+        audio_offset_seconds=0,
     )
     inference = Mock(spec=InferenceService)
     inference.is_ready = True
@@ -83,7 +91,8 @@ def test_aud02_admin_body_not_parsed_without_auth(tmp_path):
     app, _ = build(tmp_path)  # STT_ADMIN_KEY ausente: admin desabilitado
     with TestClient(app) as client:
         response = client.post(
-            "/v1/admin/apps", content=b"{not json",
+            "/v1/admin/apps",
+            content=b"{not json",
             headers={"Content-Type": "application/json"},
         )
     assert response.status_code == 404
@@ -93,7 +102,8 @@ def test_aud02_admin_body_not_parsed_with_wrong_key(tmp_path):
     app, _ = build(tmp_path, admin_key="A" * 40)
     with TestClient(app) as client:
         response = client.post(
-            "/v1/admin/apps", content=b"{not json",
+            "/v1/admin/apps",
+            content=b"{not json",
             headers={"Content-Type": "application/json", "Authorization": "Bearer " + "B" * 40},
         )
     assert response.status_code == 401
@@ -103,7 +113,8 @@ def test_aud02_small_body_limit_outside_upload(tmp_path):
     app, _ = build(tmp_path, admin_key="A" * 40)
     with TestClient(app) as client:
         response = client.post(
-            "/v1/admin/apps", content=b"x" * (2 * 1024 * 1024),
+            "/v1/admin/apps",
+            content=b"x" * (2 * 1024 * 1024),
             headers={"Content-Type": "application/json", "Authorization": "Bearer " + "A" * 40},
         )
     assert response.status_code == 413

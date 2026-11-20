@@ -8,6 +8,7 @@ def test_token_limits_isolate_apps_and_proxy_failures(tmp_path):
     _, first = registry.register("first")
     _, second = registry.register("second")
     with TestClient(app) as client:
+
         def exchange(key, ip):
             return client.post(
                 "/v1/auth/token",

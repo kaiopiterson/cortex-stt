@@ -1,4 +1,5 @@
 """Centralized application configuration for CortexLab STT v0.2.0."""
+
 from functools import lru_cache
 from typing import Literal
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -7,8 +8,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="STT_", env_file=".env", env_file_encoding="utf-8",
-        case_sensitive=False, extra="ignore", frozen=True,
+        env_prefix="STT_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+        frozen=True,
     )
     app_name: str = "CortexLab STT"
     app_version: str = "0.3.0"
@@ -67,10 +72,14 @@ class Settings(BaseSettings):
     @classmethod
     def validate_api_key(cls, value: SecretStr) -> SecretStr:
         secret = value.get_secret_value()
-        if (len(secret) < 32 or secret.lower() in {
-            "changeme", "secret", "default", "replace-with-random-secret"
-        } or secret != secret.strip()):
-            raise ValueError("STT_API_KEY must contain a non-default secret with at least 32 characters")
+        if (
+            len(secret) < 32
+            or secret.lower() in {"changeme", "secret", "default", "replace-with-random-secret"}
+            or secret != secret.strip()
+        ):
+            raise ValueError(
+                "STT_API_KEY must contain a non-default secret with at least 32 characters"
+            )
         return value
 
     @field_validator("model", "model_cache_dir")
@@ -90,11 +99,15 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_configuration(self):
         if self.legacy_api_key_enabled is None:
-            object.__setattr__(self, 'legacy_api_key_enabled', self.environment != 'production')
+            object.__setattr__(self, "legacy_api_key_enabled", self.environment != "production")
         if self.admin_key is not None:
             secret = self.admin_key.get_secret_value()
-            if len(secret) < 32 or secret == self.api_key.get_secret_value() or secret.startswith(('stt_', 'tok_')):
-                raise ValueError('STT_ADMIN_KEY must be independent and at least 32 characters')
+            if (
+                len(secret) < 32
+                or secret == self.api_key.get_secret_value()
+                or secret.startswith(("stt_", "tok_"))
+            ):
+                raise ValueError("STT_ADMIN_KEY must be independent and at least 32 characters")
         if self.device == "cpu" and self.compute in {"float16", "int8_float16"}:
             raise ValueError("Selected compute type requires a compatible accelerator")
         if self.stream_overlap_seconds >= self.stream_window_seconds:

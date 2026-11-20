@@ -1,4 +1,5 @@
 """Aggregate API routers; exception handlers are registered in main."""
+
 from fastapi import APIRouter
 
 from app.api.admin import router as admin_router

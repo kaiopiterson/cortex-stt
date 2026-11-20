@@ -1,4 +1,5 @@
 """Limit upload bodies before multipart parsing."""
+
 from app.core.auth import identify_client
 from app.api.admin import require_admin
 from starlette.requests import Request
@@ -24,9 +25,13 @@ class BodyLimit:
         path = scope["path"]
         if path in {"/admin", "/metrics", "/v1/admin"} or path.startswith("/v1/admin/"):
             try:
-                await require_admin(Request(scope), HTTPConnection(scope).headers.get("Authorization"))
+                await require_admin(
+                    Request(scope), HTTPConnection(scope).headers.get("Authorization")
+                )
             except HTTPException as exc:
-                await JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)(scope, receive, send)
+                await JSONResponse(
+                    {"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers
+                )(scope, receive, send)
                 return
         connection = HTTPConnection(scope)
         scheme, _, token = connection.headers.get("Authorization", "").partition(" ")
@@ -42,17 +47,23 @@ class BodyLimit:
             await response(scope, receive, send)
             return
         if path == "/v1/audio/transcriptions" and token.startswith("stt_"):
-            await JSONResponse({"detail": "Forbidden credential scope"}, status_code=403)(scope, receive, send)
+            await JSONResponse({"detail": "Forbidden credential scope"}, status_code=403)(
+                scope, receive, send
+            )
             return
         limit = settings.max_upload_bytes + 65536 if path == "/v1/audio/transcriptions" else 65536
         headers = dict(scope["headers"])
         try:
             declared = int(headers.get(b"content-length", b"0"))
         except ValueError:
-            await JSONResponse({"detail": "Invalid content length"}, status_code=400)(scope, receive, send)
+            await JSONResponse({"detail": "Invalid content length"}, status_code=400)(
+                scope, receive, send
+            )
             return
         if declared > limit:
-            await JSONResponse({"detail": "Maximum upload size exceeded"}, status_code=413)(scope, receive, send)
+            await JSONResponse({"detail": "Maximum upload size exceeded"}, status_code=413)(
+                scope, receive, send
+            )
             return
         count = 0
 

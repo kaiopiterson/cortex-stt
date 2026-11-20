@@ -58,9 +58,7 @@ def test_dashboard_management(tmp_path):
 def test_disabled_dashboard(tmp_path):
     app = FastAPI()
     app.include_router(router)
-    app.state.settings = Settings(
-        api_key="x" * 40, admin_key=None, device="cpu", compute="int8"
-    )
+    app.state.settings = Settings(api_key="x" * 40, admin_key=None, device="cpu", compute="int8")
     with TestClient(app) as client:
         assert client.get("/admin").status_code == 404
         assert client.get("/v1/admin/apps").status_code == 404

@@ -1,4 +1,5 @@
 """Gateway admission helpers; legacy clients retain their existing limits."""
+
 import asyncio
 
 from starlette.requests import HTTPConnection
@@ -10,8 +11,9 @@ def registered(identity: str | None) -> bool:
     return identity is not None
 
 
-async def charge(connection: HTTPConnection, identity: str | None,
-                 requests: int = 0, samples: int = 0) -> None:
+async def charge(
+    connection: HTTPConnection, identity: str | None, requests: int = 0, samples: int = 0
+) -> None:
     if identity is None or not registered(identity):
         return
     settings = connection.app.state.settings
@@ -19,7 +21,11 @@ async def charge(connection: HTTPConnection, identity: str | None,
     if store is None:
         return
     await asyncio.to_thread(
-        store.charge, identity, requests, samples, settings.app_requests_per_minute,
+        store.charge,
+        identity,
+        requests,
+        samples,
+        settings.app_requests_per_minute,
         settings.app_daily_audio_seconds * settings.sample_rate,
         settings.app_monthly_audio_seconds * settings.sample_rate,
     )

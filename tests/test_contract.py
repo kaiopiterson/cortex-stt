@@ -6,8 +6,7 @@ from app.services.inference import TranscriptionResult, TranscriptionSegment
 
 def test_confidence():
     result = TranscriptionResult(
-        "Olá", (TranscriptionSegment(0, 1, "Olá", 0, 0.2),),
-        "pt", 1, "small", "cpu", 1, 10, 0, 0
+        "Olá", (TranscriptionSegment(0, 1, "Olá", 0, 0.2),), "pt", 1, "small", "cpu", 1, 10, 0, 0
     )
     assert result.confidence == 0.8
     assert result.to_dict()["confidence"] == 0.8

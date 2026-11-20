@@ -1,4 +1,5 @@
 """Exchange backend application credentials for short-lived access tokens."""
+
 import asyncio
 from typing import Annotated
 
@@ -34,7 +35,12 @@ async def issue_token(
     scheme, _, key = (authorization or "").partition(" ")
     registry: AppRegistry | None = getattr(state, "registry", None)
     app_id = None
-    if scheme.lower() == "bearer" and registry is not None and key.startswith("stt_") and len(key) == 47:
+    if (
+        scheme.lower() == "bearer"
+        and registry is not None
+        and key.startswith("stt_")
+        and len(key) == 47
+    ):
         app_id = await asyncio.to_thread(registry.identify, key)
     if registry is None or app_id is None:
         limits.hit(failure_limit, "failure", ip)

@@ -1,4 +1,5 @@
 """Protocol 1.1 integration tests with no native inference."""
+
 import asyncio
 from unittest.mock import AsyncMock, Mock
 
@@ -19,8 +20,16 @@ PATH = "/v1/audio/stream"
 def application(tmp_path):
     settings = Settings(api_key=KEY, device="cpu", compute="int8", stream_auth_timeout_seconds=1)
     result = TranscriptionResult(
-        "Olá", (TranscriptionSegment(0, 0.4, "Olá", -0.1, 0.1),),
-        "pt", 1, "small", "cpu", 1, 10, 0, 0,
+        "Olá",
+        (TranscriptionSegment(0, 0.4, "Olá", -0.1, 0.1),),
+        "pt",
+        1,
+        "small",
+        "cpu",
+        1,
+        10,
+        0,
+        0,
     )
     service = Mock(spec=InferenceService)
     service.is_ready = True

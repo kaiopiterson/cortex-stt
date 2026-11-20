@@ -22,8 +22,7 @@ async def test_utterance_final_uses_single_inference():
 
 
 def test_utterance_duration_limit():
-    settings = Settings(api_key="x" * 40, device="cpu", compute="int8",
-                        utterance_max_seconds=1)
+    settings = Settings(api_key="x" * 40, device="cpu", compute="int8", utterance_max_seconds=1)
     session = StreamingSession(settings, mode="utterance")
     with pytest.raises(AudioDurationError):
         session.append_audio(b"\x00\x00" * 16001)
