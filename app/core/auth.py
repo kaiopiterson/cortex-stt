@@ -4,15 +4,15 @@ import secrets
 from dataclasses import dataclass
 from typing import Literal
 
+from starlette.requests import HTTPConnection
+
+from app.core.registry import AppRegistry
+
 
 @dataclass(frozen=True)
 class Identity:
     app_id: str
     kind: Literal['legacy', 'permanent', 'token']
-
-from starlette.requests import HTTPConnection
-
-from app.core.registry import AppRegistry
 
 
 async def identify_client(connection: HTTPConnection, key: str | None, *, active_session: bool = False) -> Identity | None:
