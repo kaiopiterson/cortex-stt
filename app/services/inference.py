@@ -13,6 +13,7 @@ import ctranslate2
 import numpy as np
 from faster_whisper import WhisperModel
 from app.core.config import Settings
+from app.services.gpu_info import log_vram
 from app.services.priority import PrioritySlots
 
 logger = logging.getLogger(__name__)
@@ -126,6 +127,8 @@ class InferenceService:
             except ModelLoadError:
                 logger.error("STT model initialization failed")
                 raise
+            if self.settings.device == "cuda":
+                await asyncio.to_thread(log_vram, self.settings.device_index)
             self._ready = True
             logger.info("STT model loaded in %.2f seconds", perf_counter() - started)
 

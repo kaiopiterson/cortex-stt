@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     model: str = "small"
     device: Literal["cuda", "cpu"] = "cuda"
     device_index: int = Field(default=0, ge=0)
-    compute: Literal["float32", "float16", "int8", "int8_float32", "int8_float16"] = "int8_float32"
+    compute: Literal["float32", "float16", "int8", "int8_float32", "int8_float16"] = "int8_float16"
     language: str = "pt"
     model_cache_dir: str = "/models"
     cpu_threads: int = Field(default=4, ge=1, le=64)
@@ -71,6 +71,13 @@ class Settings(BaseSettings):
         if not value.strip():
             raise ValueError("Configuration value cannot be empty")
         return value.strip()
+
+    @model_validator(mode="before")
+    @classmethod
+    def device_compute_default(cls, values):
+        if isinstance(values, dict) and values.get("device") == "cpu" and "compute" not in values:
+            return {**values, "compute": "int8"}
+        return values
 
     @model_validator(mode="after")
     def validate_configuration(self):
