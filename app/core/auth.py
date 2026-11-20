@@ -14,6 +14,7 @@ from app.core.registry import AppRegistry
 class Identity:
     app_id: str
     kind: Literal["legacy", "permanent", "token"]
+    subject: str | None = None
 
 
 async def identify_client(
@@ -32,4 +33,7 @@ async def identify_client(
     app_id = await asyncio.to_thread(registry.identify, key, ignore_expiry=active_session)
     if app_id is None:
         return None
-    return Identity(app_id, "permanent" if key.startswith("stt_") else "token")
+    if key.startswith("stt_"):
+        return Identity(app_id, "permanent")
+    subject = await asyncio.to_thread(registry.token_subject, key)
+    return Identity(app_id, "token", subject)

@@ -1,6 +1,7 @@
 """Persistent application registry. Secrets are returned only on creation."""
 
 import hashlib
+import re
 import secrets
 import sqlite3
 import time
@@ -36,6 +37,27 @@ class AppRegistry:
             db.execute("""CREATE TABLE IF NOT EXISTS revoked_apps (
                 app_id TEXT PRIMARY KEY REFERENCES applications(id)
             )""")
+
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)")
+            if not db.execute("SELECT 1 FROM schema_version WHERE version=1").fetchone():
+                for column in (
+                    "requests_per_minute INTEGER CHECK(requests_per_minute > 0)",
+                    "daily_audio_seconds INTEGER CHECK(daily_audio_seconds > 0)",
+                    "monthly_audio_seconds INTEGER CHECK(monthly_audio_seconds > 0)",
+                    "concurrency INTEGER CHECK(concurrency > 0)",
+                    "priority_class TEXT NOT NULL DEFAULT 'normal'",
+                ):
+                    db.execute("ALTER TABLE applications ADD COLUMN " + column)
+                db.execute("ALTER TABLE access_tokens ADD COLUMN subject TEXT")
+                db.execute("INSERT INTO schema_version VALUES (1)")
+
+    def token_subject(self, key: str) -> str | None:
+        with closing(self.connect()) as db:
+            row = db.execute(
+                "SELECT subject FROM access_tokens WHERE token_hash=?", (self.digest(key),)
+            ).fetchone()
+        return str(row[0]) if row and row[0] is not None else None
 
     def register(self, name: str) -> tuple[str, str]:
         name = name.strip()
@@ -81,9 +103,11 @@ class AppRegistry:
             {"id": row[0], "name": row[1], "created_at": row[2], "status": row[3]} for row in rows
         ]
 
-    def issue_token(self, key: str, ttl: int = 900) -> tuple[str, int] | None:
+    def issue_token(self, key: str, ttl: int = 900, subject: str | None = None) -> tuple[str, int] | None:
         if not key.startswith("stt_") or len(key) != 47 or not 1 <= ttl <= 3600:
             return None
+        if subject is not None and not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", subject):
+            raise ValueError("Invalid subject")
         token = "tok_" + secrets.token_urlsafe(32)
         now = int(time.time())
         with closing(self.connect()) as db, db:
@@ -96,8 +120,8 @@ class AppRegistry:
             if not row:
                 return None
             db.execute(
-                "INSERT INTO access_tokens VALUES (?,?,?)",
-                (self.digest(token), row[0], now + ttl),
+                "INSERT INTO access_tokens(token_hash,app_id,expires_at,subject) VALUES (?,?,?,?)",
+                (self.digest(token), row[0], now + ttl, subject),
             )
         return token, ttl
 

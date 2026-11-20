@@ -7,11 +7,16 @@ from fastapi import APIRouter, Header, HTTPException, Request, Response
 from limits import parse
 from limits.storage import MemoryStorage
 from limits.strategies import FixedWindowRateLimiter
+from pydantic import BaseModel, Field
 
 from app.core.limiter import client_ip
 from app.core.registry import AppRegistry
 
 router = APIRouter()
+
+
+class TokenRequest(BaseModel):
+    subject: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._-]{1,64}$")
 
 
 def token_rate_key(request: Request) -> str:
@@ -23,6 +28,7 @@ async def issue_token(
     request: Request,
     response: Response,
     authorization: Annotated[str | None, Header()] = None,
+    body: TokenRequest | None = None,
 ):
     state = request.app.state
     if not hasattr(state, "token_limits"):
@@ -47,7 +53,9 @@ async def issue_token(
         raise HTTPException(401, "Invalid API credentials", headers={"WWW-Authenticate": "Bearer"})
     if not limits.hit(parse("30/minute"), "issuance", app_id):
         raise HTTPException(429, "Rate limit exceeded", headers={"Retry-After": "60"})
-    result = await asyncio.to_thread(registry.issue_token, key)
+    result = await asyncio.to_thread(
+        registry.issue_token, key, subject=body.subject if body else None
+    )
     if result is None:
         raise HTTPException(401, "Invalid API credentials", headers={"WWW-Authenticate": "Bearer"})
     token, ttl = result
