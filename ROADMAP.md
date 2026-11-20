@@ -10,3 +10,8 @@
 - v1.0 Production: segurança, compatibilidade, observabilidade, testes de carga, documentação e escalabilidade comprovadas.
 
 Metas aspiracionais: primeiro parcial em 500 ms, final de ditado curto em até 1 s após fala, 4–10 sessões concorrentes; confirmar por benchmarks P50/P95/P99, RTF, WER/CER e consumo.
+
+## v0.3 RC
+GW-01 a GW-11: implementação inicial publicada; GW-12/13 em validação.
+Pendências: CI verde, locks, auditoria granular, cotas editáveis, benchmark GPU.
+AudioWorklet e WER/CER da v0.2 permanecem pendentes.

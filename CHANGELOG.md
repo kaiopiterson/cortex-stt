@@ -14,3 +14,8 @@
 - Add bounded streaming receiver queue and mock tests.
 - WebSocket warning event is additive; protocol version remains 1.1.
 - Validation, full dependency lock and performance benchmarks pending.
+
+## v0.3.0 — Release candidate
+- Registro SQLite, tokens, rotação, revogação, cotas e concorrência por app.
+- Métricas Prometheus, NVML opcional, auditoria agregada e dashboard.
+- Homologação, locks e benchmark GPU pendentes.
