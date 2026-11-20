@@ -6,6 +6,8 @@ from io import BytesIO
 from pathlib import Path
 from time import monotonic
 from typing import Annotated
+
+import numpy as np
 from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse
 from app.api.common import (SettingsDependency, InferenceDependency, Authenticated,
@@ -87,6 +89,7 @@ async def transcribe_audio(request: Request, response: Response, settings: Setti
         if len(audio) > settings.max_upload_bytes:
             raise HTTPException(413, "Maximum upload size exceeded")
         prepared = BytesIO(audio)
+        prepared_audio: np.ndarray | BytesIO
         if app_acquired:
             samples = await asyncio.to_thread(inference._prepare_audio, prepared)
             await charge(request, identity, samples=int(samples.size))
