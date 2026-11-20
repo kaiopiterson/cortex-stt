@@ -70,8 +70,8 @@ class Settings(BaseSettings):
     hallucination_blocklist: list[str] = Field(
         default_factory=lambda: [
             "legendas pela comunidade amara.org",
-            "legenda por",
             "legendado por",
+            "legendas por",
             "obrigado por assistir",
             "obrigada por assistir",
             "inscreva-se no canal",

@@ -44,6 +44,8 @@ class StreamingSession:
     committed_until_seconds: float = 0.0
     revision: int = 0
     priority_rank: int = 1
+    filtered_segments: int = 0
+    inference: object | None = None
 
     @property
     def duration_limit(self) -> int:
@@ -186,6 +188,7 @@ class StreamingSession:
             "revision": self.revision,
             "confidence": self.confidence,
             "needs_review": self.audio_skipped
+            or self.filtered_segments > 0
             or not self.full_text
             or self.confidence < self.settings.review_threshold,
             "audio_duration_seconds": round(self.audio_duration_seconds, 3),
@@ -194,7 +197,7 @@ class StreamingSession:
                 {"start": w.start, "end": w.end, "text": w.text}
                 for w in self.committed_words + self.provisional_words
             ],
-            "processing": processing_metadata(self.settings),
+            "processing": processing_metadata(self.settings, self.inference),
         }
         if result is not None:
             payload.update(
@@ -228,6 +231,7 @@ async def process_window(
     )
     if result.language:
         session.language = result.language
+    session.filtered_segments += result.filtered_segments
     session.apply_result(result, window_end, confirmation_limit_samples, final)
     session.last_inference_samples = max(session.last_inference_samples, window_end)
     return result
@@ -285,6 +289,7 @@ async def finalize_stream(
             hotwords=session.hotwords,
         )
         session.language = result.language
+        session.filtered_segments += result.filtered_segments
         session.apply_result(
             result, session.total_received_samples, session.total_received_samples, final=True
         )
@@ -450,6 +455,7 @@ async def stream_audio(websocket: WebSocket) -> None:
             mode=mode,
             hotwords=hints,
             priority_rank=admission.priority(interactive=True) // 2,
+            inference=inference,
         )
         started = monotonic()
         await websocket.send_json(
@@ -465,7 +471,7 @@ async def stream_audio(websocket: WebSocket) -> None:
                 "confirmation_margin_seconds": settings.stream_overlap_seconds,
                 "max_duration_seconds": session.duration_limit,
                 "mode": mode,
-                "processing": processing_metadata(settings),
+                "processing": processing_metadata(settings, inference),
             }
         )
         queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=settings.stream_queue_size)

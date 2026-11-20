@@ -88,15 +88,20 @@ def current_admission(request: Request) -> Admission:
     return request.state.admission
 
 
-def processing_metadata(settings: Settings) -> dict:
-    return {
+def processing_metadata(settings: Settings, inference: object | None = None) -> dict:
+    """Describe where audio was processed; reports the device actually in use."""
+    device = getattr(inference, "active_device", None)
+    metadata = {
         "mode": "server",
         "location": "server",
         "server_used": True,
         "engine": "faster-whisper",
         "model": settings.model,
-        "device": settings.device,
+        "device": device if isinstance(device, str) else settings.device,
     }
+    if getattr(inference, "degraded", False) is True:
+        metadata["degraded"] = True
+    return metadata
 
 
 async def acquire_session(semaphore: asyncio.Semaphore, timeout: float) -> None:

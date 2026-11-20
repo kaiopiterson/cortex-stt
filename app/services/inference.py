@@ -21,6 +21,12 @@ from app.services.priority import PrioritySlots
 logger = logging.getLogger(__name__)
 
 
+def normalize_text(text: str) -> str:
+    """Casefold, keep letters and digits, collapse spaces (for blocklist matching)."""
+    cleaned = "".join(char if char.isalnum() else " " for char in text.casefold())
+    return " ".join(cleaned.split())
+
+
 class InferenceError(RuntimeError):
     """Base inference service error."""
 
@@ -118,6 +124,22 @@ class InferenceService:
         self._pending: set[asyncio.Future] = set()
         self._ready = False
         self._closed = False
+        self.active_device: str = settings.device
+        self.active_compute: str = settings.compute
+        self.degraded = False
+        self._blocklist = {
+            normalize_text(entry) for entry in settings.hallucination_blocklist if entry.strip()
+        }
+
+    def compute_candidates(self) -> list[tuple[str, str]]:
+        """Ordered (device, compute) attempts: configured, int8_float32 on CUDA, then CPU int8."""
+        candidates: list[tuple[str, str]] = [(self.settings.device, self.settings.compute)]
+        if self.settings.device == "cuda":
+            if self.settings.compute != "int8_float32":
+                candidates.append(("cuda", "int8_float32"))
+            if self.settings.cpu_fallback:
+                candidates.append(("cpu", "int8"))
+        return candidates
 
     @property
     def is_ready(self) -> bool:
@@ -149,31 +171,46 @@ class InferenceService:
             except ModelLoadError:
                 logger.error("STT model initialization failed")
                 raise
-            if self.settings.device == "cuda":
+            if self.active_device == "cuda":
                 await asyncio.to_thread(log_vram, self.settings.device_index)
             self._ready = True
-            logger.info("STT model loaded in %.2f seconds", perf_counter() - started)
+            logger.info(
+                "STT model loaded in %.2f seconds on %s/%s",
+                perf_counter() - started,
+                self.active_device,
+                self.active_compute,
+            )
 
     def _load_model(self) -> Any:
-        try:
-            supported_types = ctranslate2.get_supported_compute_types(
-                self.settings.device, self.settings.device_index
-            )
-            if self.settings.compute not in supported_types:
-                raise ModelLoadError(
-                    "Configured compute type is not supported by the selected device"
+        """Load the model, falling back through compute_candidates() (AUD-16)."""
+        errors: list[str] = []
+        for index, (device, compute) in enumerate(self.compute_candidates()):
+            device_index = self.settings.device_index if device == "cuda" else 0
+            try:
+                supported = ctranslate2.get_supported_compute_types(device, device_index)
+                if compute not in supported:
+                    errors.append(f"{device}/{compute}: unsupported")
+                    continue
+                model = self._model_factory(
+                    self.settings.model,
+                    device=device,
+                    device_index=device_index,
+                    compute_type=compute,
+                    cpu_threads=self.settings.cpu_threads,
+                    num_workers=self.settings.workers,
+                    download_root=self.settings.model_cache_dir,
                 )
-            return self._model_factory(
-                self.settings.model,
-                device=self.settings.device,
-                device_index=self.settings.device_index,
-                compute_type=self.settings.compute,
-                cpu_threads=self.settings.cpu_threads,
-                num_workers=self.settings.workers,
-                download_root=self.settings.model_cache_dir,
-            )
-        except (RuntimeError, ValueError, OSError, ImportError) as exc:
-            raise ModelLoadError("Unable to initialize inference backend") from exc
+            except (RuntimeError, ValueError, OSError, ImportError) as exc:
+                errors.append(f"{device}/{compute}: {type(exc).__name__}")
+                continue
+            self.active_device, self.active_compute = device, compute
+            self.degraded = index > 0
+            if self.degraded:
+                logger.warning(
+                    "STT running degraded on %s/%s; attempts: %s", device, compute, errors
+                )
+            return model
+        raise ModelLoadError("Unable to initialize inference backend: " + "; ".join(errors))
 
     async def close(self) -> None:
         async with self._lifecycle_lock:
@@ -299,21 +336,38 @@ class InferenceService:
                 )
         except (RuntimeError, ValueError, OSError, av.error.FFmpegError) as exc:
             raise ModelExecutionError("Speech inference execution failed") from exc
+        kept = [segment for segment in result_segments if not self.is_hallucination(segment)]
         return TranscriptionResult(
-            text="".join(segment.text for segment in result_segments).strip(),
-            segments=tuple(result_segments),
+            text="".join(segment.text for segment in kept).strip(),
+            segments=tuple(kept),
             language=info.language,
             language_probability=float(info.language_probability),
             model=self.settings.model,
-            device=self.settings.device,
+            device=self.active_device,
             audio_duration_seconds=round(audio_duration, 4),
             processing_ms=round((perf_counter() - started) * 1000, 2),
             queue_wait_ms=round(queue_wait_ms, 2),
             audio_offset_seconds=round(audio_offset_seconds, 3),
+            filtered_segments=len(result_segments) - len(kept),
+        )
+
+    def is_hallucination(self, segment: "TranscriptionSegment") -> bool:
+        """AUD-17: drop silence-born text and known Whisper PT-BR hallucinations."""
+        if not self.settings.hallucination_filter:
+            return False
+        if (
+            segment.no_speech_prob >= self.settings.hallucination_no_speech_threshold
+            and segment.avg_logprob <= self.settings.hallucination_logprob_threshold
+        ):
+            return True
+        text = normalize_text(segment.text)
+        return bool(text) and any(
+            text == entry or text.startswith(entry + " ") for entry in self._blocklist
         )
 
     def metrics_snapshot(self) -> dict[str, float]:
         return {
+            "stt_degraded": 1 if self.degraded else 0,
             "stt_inference_active": len(self._pending),
             "stt_inference_queue_depth": len(self._semaphore.waiters),
             "stt_inference_workers_available": self._semaphore.available,

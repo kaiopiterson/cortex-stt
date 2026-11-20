@@ -137,7 +137,7 @@ async def transcribe_audio(
             or result.filtered_segments > 0
         )
         payload["total_ms"] = round((monotonic() - started) * 1000, 2)
-        payload["processing"] = processing_metadata(settings)
+        payload["processing"] = processing_metadata(settings, inference)
         return payload
     except UsageLimit as exc:
         telemetry.reject("quota_exceeded")
