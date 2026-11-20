@@ -15,7 +15,7 @@ from starlette.requests import HTTPConnection
 from app.core.registry import AppRegistry
 
 
-async def identify_client(connection: HTTPConnection, key: str | None) -> Identity | None:
+async def identify_client(connection: HTTPConnection, key: str | None, *, active_session: bool = False) -> Identity | None:
     if not key or len(key) > 4096:
         return None
     settings = connection.app.state.settings
@@ -26,7 +26,7 @@ async def identify_client(connection: HTTPConnection, key: str | None) -> Identi
     registry: AppRegistry | None = getattr(connection.app.state, "registry", None)
     if registry is None:
         return None
-    app_id = await asyncio.to_thread(registry.identify, key)
+    app_id = await asyncio.to_thread(registry.identify, key, ignore_expiry=active_session)
     if app_id is None:
         return None
     return Identity(app_id, "permanent" if key.startswith("stt_") else "token")

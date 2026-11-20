@@ -353,8 +353,14 @@ async def stream_audio(websocket: WebSocket) -> None:
         receiver = asyncio.create_task(receive_frames())
         busy_failures = 0
         deferred = None
-        async def authorized():
-            current = await identify_client(websocket, api_key)
+        checked_at = 0.0
+
+        async def authorized(force: bool = False) -> bool:
+            nonlocal checked_at
+            if not force and monotonic() - checked_at < 1.0:
+                return True
+            current = await identify_client(websocket, api_key, active_session=True)
+            checked_at = monotonic()
             if current is None or current.app_id != identity:
                 await websocket_error(websocket, "unauthorized", "Invalid API credentials", 1008)
                 return False
@@ -366,7 +372,7 @@ async def stream_audio(websocket: WebSocket) -> None:
             remaining = session.duration_limit - (monotonic() - started)
             if remaining <= 0:
                 result = await finalize_stream(session, inference)
-                if not await authorized():
+                if not await authorized(force=True):
                     return
                 payload = session.event_payload("final", result)
                 payload["reason"] = "session_duration_limit"
@@ -391,7 +397,7 @@ async def stream_audio(websocket: WebSocket) -> None:
                     return
             except asyncio.TimeoutError:
                 result = await finalize_stream(session, inference)
-                if not await authorized():
+                if not await authorized(force=True):
                     return
                 payload = session.event_payload("final", result)
                 payload["reason"] = "session_duration_limit" if monotonic() - started >= session.duration_limit else "idle_timeout"
@@ -404,7 +410,7 @@ async def stream_audio(websocket: WebSocket) -> None:
             if command is not None:
                 if command == "finish":
                     result = await finalize_stream(session, inference)
-                    if not await authorized():
+                    if not await authorized(force=True):
                         return
                     await websocket.send_json(session.event_payload("final", result))
                     await websocket.close(code=1000)

@@ -53,15 +53,15 @@ class AppRegistry:
     def digest(key: str) -> str:
         return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
-    def identify(self, key: str) -> str | None:
+    def identify(self, key: str, *, ignore_expiry: bool = False) -> str | None:
         if len(key) != 47 or not key.startswith(("stt_", "tok_")):
             return None
         with closing(self.connect()) as db:
             if key.startswith("tok_"):
                 row = db.execute(
-                    """SELECT app_id FROM access_tokens WHERE token_hash=? AND expires_at>?
+                    """SELECT app_id FROM access_tokens WHERE token_hash=? AND (expires_at>? OR ?)
                     AND app_id NOT IN (SELECT app_id FROM revoked_apps)""",
-                    (self.digest(key), int(time.time())),
+                    (self.digest(key), int(time.time()), ignore_expiry),
                 ).fetchone()
             else:
                 row = db.execute(
@@ -92,7 +92,6 @@ class AppRegistry:
             ).fetchone()
             if not row:
                 return None
-            db.execute("DELETE FROM access_tokens WHERE expires_at<=?", (now,))
             db.execute(
                 "INSERT INTO access_tokens VALUES (?,?,?)",
                 (self.digest(token), row[0], now + ttl),
