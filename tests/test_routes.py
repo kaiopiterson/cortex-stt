@@ -32,6 +32,7 @@ def application():
     app.state.inference_service = inference
     app.state.stream_slots = asyncio.Semaphore(settings.stream_sessions or settings.sessions)
     app.state.rest_slots = asyncio.Semaphore(settings.rest_concurrency)
+    app.state.limiter = limiter
     app.include_router(api_router)
     yield app
     limiter.reset()
@@ -93,3 +94,23 @@ async def test_rest_available_with_all_stream_slots_taken(application):
     finally:
         for _ in range(application.state.settings.sessions):
             slots.release()
+
+@pytest.mark.asyncio
+async def test_distinct_keys_have_distinct_buckets(application):
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application), base_url="http://test") as client:
+        application.state.settings = application.state.settings.model_copy(update={"rate_limit": "1/minute"})
+        headers = {"Authorization": f"Bearer {TEST_KEY}"}
+        assert (await client.get("/v1/models", headers=headers)).status_code == 200
+        assert (await client.get("/v1/models", headers=headers)).status_code == 429
+        from pydantic import SecretStr
+        other = "another-key-" + "z" * 32
+        application.state.settings = application.state.settings.model_copy(update={"api_key": SecretStr(other)})
+        assert (await client.get("/v1/models", headers={"Authorization": f"Bearer {other}"})).status_code == 200
+
+
+def test_untrusted_proxy_header_ignored(application):
+    from starlette.requests import Request
+    from app.core.limiter import request_key
+    request = Request({"type": "http", "app": application, "client": ("127.0.0.1", 1234),
+                       "headers": [(b"cf-connecting-ip", b"203.0.113.5")]})
+    assert request_key(request) == "ip:127.0.0.1"

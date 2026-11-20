@@ -5,11 +5,11 @@ from io import BytesIO
 from pathlib import Path
 from time import monotonic
 from typing import Annotated
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse
 from app.api.common import (SettingsDependency, InferenceDependency, Authenticated,
                             acquire_session, processing_metadata)
-from app.core.limiter import limiter
+from app.core.limiter import configured_limit, limiter
 from app.services.inference import (AudioDurationError, InvalidAudioError, InferenceBusyError,
                                     ModelNotReadyError, ModelExecutionError)
 
@@ -37,14 +37,14 @@ async def health(settings: SettingsDependency, inference: InferenceDependency) -
 
 
 @router.get("/v1/models", tags=["Models"])
-@limiter.limit("60/minute")
-async def list_models(request: Request, settings: SettingsDependency, authenticated: Authenticated) -> dict:
+@limiter.limit(configured_limit)
+async def list_models(request: Request, response: Response, settings: SettingsDependency, authenticated: Authenticated) -> dict:
     return {"object": "list", "data": [{"id": settings.model, "object": "model", "owned_by": "cortexlab"}]}
 
 
 @router.post("/v1/audio/transcriptions", tags=["Transcriptions"])
-@limiter.limit("60/minute")
-async def transcribe_audio(request: Request, settings: SettingsDependency,
+@limiter.limit(configured_limit)
+async def transcribe_audio(request: Request, response: Response, settings: SettingsDependency,
                            inference: InferenceDependency, authenticated: Authenticated,
                            file: Annotated[UploadFile, File()],
                            model: Annotated[str | None, Form()] = None,
@@ -69,10 +69,10 @@ async def transcribe_audio(request: Request, settings: SettingsDependency,
         if len(audio) > settings.max_upload_bytes:
             raise HTTPException(413, "Maximum upload size exceeded")
         result = await inference.transcribe(audio=BytesIO(audio), language=language, initial_prompt=prompt)
-        response = result.to_dict()
-        response["total_ms"] = round((monotonic() - started) * 1000, 2)
-        response["processing"] = processing_metadata(settings)
-        return response
+        payload = result.to_dict()
+        payload["total_ms"] = round((monotonic() - started) * 1000, 2)
+        payload["processing"] = processing_metadata(settings)
+        return payload
     except AudioDurationError as exc:
         raise HTTPException(413, "Maximum audio duration exceeded") from exc
     except InvalidAudioError as exc:

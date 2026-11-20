@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     api_key: SecretStr
     rate_limit: str = "60/minute"
+    trust_proxy_headers: bool = False
+    stream_connections_per_key: int = Field(default=4, ge=1, le=100)
     model: str = "small"
     device: Literal["cuda", "cpu"] = "cuda"
     device_index: int = Field(default=0, ge=0)
