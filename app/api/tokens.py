@@ -4,13 +4,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
 
-from app.core.limiter import limiter
+from app.core.limiter import client_ip, limiter
 
 router = APIRouter()
 
 
 @router.post("/v1/auth/token")
-@limiter.limit("30/minute")
+@limiter.limit("30/minute", key_func=client_ip)
 async def issue_token(
     request: Request,
     response: Response,

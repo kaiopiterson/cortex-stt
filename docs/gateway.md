@@ -18,7 +18,21 @@ e o WebSocket usa api_key no handshake 1.1. Nenhum endpoint administrativo públ
 
 ## Limitações
 
-Tokens temporários, revogação, cotas, auditoria, métricas e rotação ainda não
-implementados. O rate limit existente continua por hash de credencial.
+Cotas, auditoria e métricas ainda não implementadas. O rate limit existente continua por hash de credencial.
 O banco deve permanecer em armazenamento local, não em compartilhamento de rede.
 Não há migração versionada de schema neste incremento.
+
+## Tokens e revogação
+
+POST /v1/auth/token com Authorization: Bearer <chave individual> retorna
+access_token, token_type e expires_in (900 segundos). Sem refresh token.
+A chave legada e tokens de acesso não podem emitir tokens.
+Use o token no Bearer REST ou api_key do handshake WebSocket.
+Emissão limitada por IP; limites de consumo por app ainda pendentes.
+O backend consumidor deve autenticar e autorizar seus usuários antes de emitir tokens.
+
+CLI local: rotate APP_ID, revoke APP_ID, revoke-tokens APP_ID.
+Rotação invalida a chave anterior e todos os tokens do app. Revogação do app
+é definitiva neste incremento. Sessões WebSocket já abertas e inferências
+em andamento não são interrompidas; a validação ocorre na autenticação.
+As tabelas adicionais são criadas ao iniciar, preservando os registros antigos.
