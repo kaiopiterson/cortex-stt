@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.venv/
+models/
+*.wav
+*.mp3
+*.ogg
+*.pem
+*.key
+.pytest_cache/
