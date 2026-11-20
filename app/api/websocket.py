@@ -175,12 +175,25 @@ async def process_window(session: StreamingSession, inference: InferenceService,
     return result
 
 
+def trim_backlog(session: StreamingSession) -> int:
+    settings = session.settings
+    lag = session.total_received_samples - session.last_inference_samples
+    if lag <= settings.stream_max_lag_seconds * settings.sample_rate:
+        return 0
+    skipped = max(0, session.buffered_samples - settings.stream_window_samples)
+    if skipped:
+        session.discard_samples(skipped)
+        session.provisional_words.clear()
+    return skipped
+
+
 async def advance_stream(session: StreamingSession, inference: InferenceService) -> TranscriptionResult | None:
     settings = session.settings
     window = settings.stream_window_samples
     step = settings.stream_step_samples
     margin = settings.stream_overlap_samples
     latest = None
+    trim_backlog(session)
     while session.buffered_samples > window:
         end = session.buffer_offset_samples + window
         if end > session.last_inference_samples:
@@ -313,6 +326,7 @@ async def stream_audio(websocket: WebSocket) -> None:
 
         receiver = asyncio.create_task(receive_frames())
         busy_failures = 0
+        deferred = None
         while True:
             remaining = session.duration_limit - (monotonic() - started)
             if remaining <= 0:
@@ -323,7 +337,10 @@ async def stream_audio(websocket: WebSocket) -> None:
                 await websocket.close(code=1000)
                 return
             try:
-                message = await next_frame(queue, receiver, min(settings.stream_idle_timeout_seconds, remaining))
+                if deferred is not None:
+                    message, deferred = deferred, None
+                else:
+                    message = await next_frame(queue, receiver, min(settings.stream_idle_timeout_seconds, remaining))
             except asyncio.TimeoutError:
                 result = await finalize_stream(session, inference)
                 payload = session.event_payload("final", result)
@@ -351,8 +368,22 @@ async def stream_audio(websocket: WebSocket) -> None:
             session.append_audio(chunk)
             if session.mode == "utterance":
                 continue
-            # Retain all audio within the next window; apply backpressure rather
-            # than silently dropping speech when the receiver falls behind.
+            # Drain already queued audio without reordering control messages.
+            for _ in range(settings.stream_queue_size):
+                try:
+                    queued = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if queued.get("bytes") is None:
+                    deferred = queued
+                    break
+                session.append_audio(queued["bytes"])
+            skipped = trim_backlog(session)
+            if skipped:
+                await websocket.send_json({
+                    "type": "warning", "code": "lagging",
+                    "skipped_seconds": skipped / settings.sample_rate,
+                })
             try:
                 latest = await advance_stream(session, inference)
                 busy_failures = 0
