@@ -1,5 +1,6 @@
 """Authenticate and bound request bodies before parsing (CortexLab STT v0.3.0)."""
 
+from app.core import telemetry
 from app.core.auth import CredentialStoreUnavailable, identify_client
 from app.api.admin import require_admin
 from app.api.metrics import require_metrics
@@ -34,6 +35,8 @@ class BodyLimit:
             try:
                 await guard(Request(scope), HTTPConnection(scope).headers.get("Authorization"))
             except HTTPException as exc:
+                if exc.status_code == 401:
+                    telemetry.auth_failed("metrics" if path == "/metrics" else "admin")
                 await JSONResponse(
                     {"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers
                 )(scope, receive, send)
@@ -45,6 +48,7 @@ class BodyLimit:
             try:
                 identity = await identify_client(connection, token)
             except CredentialStoreUnavailable:
+                telemetry.reject("unavailable")
                 await JSONResponse(
                     {"detail": "Service temporarily unavailable"},
                     status_code=503,
@@ -55,6 +59,8 @@ class BodyLimit:
             connection.state.identity = identity
         if path == "/v1/audio/transcriptions" and identity is None:
             allowed = self.unauthorized.hit(parse("60/minute"), client_ip(connection))
+            telemetry.auth_failed("rest")
+            telemetry.reject("unauthorized" if allowed else "rate_limited")
             response = JSONResponse(
                 {"detail": "Invalid API credentials" if allowed else "Rate limit exceeded"},
                 status_code=401 if allowed else 429,
@@ -63,6 +69,7 @@ class BodyLimit:
             await response(scope, receive, send)
             return
         if path == "/v1/audio/transcriptions" and token.startswith("stt_"):
+            telemetry.reject("forbidden_scope")
             await JSONResponse({"detail": "Forbidden credential scope"}, status_code=403)(
                 scope, receive, send
             )

@@ -1,0 +1,16 @@
+# Prometheus for CortexLab STT (compose profile "observability").
+global:
+  scrape_interval: 15s
+  evaluation_interval: 30s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: cortex-stt
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/stt_metrics_token
+    static_configs:
+      - targets: ["stt:8000"]

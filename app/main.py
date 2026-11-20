@@ -16,6 +16,7 @@ from app.core.config import get_settings
 from app.core.registry import AppRegistry
 from app.core.auth import IdentityCache
 from app.core.gateway import Gateway
+from app.core.observability import RequestContext, configure_logging
 from app.core.maintenance import RetentionSchedule, run_retention
 from app.core.usage import AppSlots, UsageLedger, UsageStore
 from app.core.limiter import limiter
@@ -45,9 +46,7 @@ async def maintenance_loop(app: FastAPI) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    logging.basicConfig(
-        level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s %(message)s"
-    )
+    configure_logging(settings.log_level, settings.log_format)
     logger.info("Starting %s version %s", settings.app_name, settings.app_version)
 
     inference_service = InferenceService(settings=settings)
@@ -106,6 +105,8 @@ def create_app() -> FastAPI:
 
     # Registro do router consolidado
     application.add_middleware(BodyLimit)
+    # Added last, so it wraps everything: correlation id, access log, HTTP metrics.
+    application.add_middleware(RequestContext)
     settings = get_settings()
     application.include_router(
         build_router(

@@ -1,0 +1,38 @@
+groups:
+  - name: cortex-stt
+    rules:
+      - alert: SttDown
+        expr: up{job="cortex-stt"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "CortexLab STT is not answering /metrics"}
+      - alert: SttInferenceQueueHigh
+        expr: stt_inference_queue_depth > 4
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Inference queue above 4 for 5 minutes"}
+      - alert: SttFinalLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(stt_stream_final_latency_seconds_bucket[10m]))) > 2
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "P95 time from finish to final above 2 s"}
+      - alert: SttVramHigh
+        expr: stt_gpu_memory_used_bytes / stt_gpu_memory_total_bytes > 0.92
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "GPU memory above 92%"}
+      - alert: SttInferenceErrors
+        expr: rate(stt_inference_failure_total[5m]) > 0.1
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "Inference failures above 0.1/s"}
+      - alert: SttDegradedCompute
+        expr: stt_degraded == 1
+        for: 1m
+        labels: {severity: warning}
+        annotations: {summary: "Model running on fallback compute (CPU or int8_float32)"}
+      - alert: SttAuthFailuresSpike
+        expr: sum(rate(stt_auth_failures_total[5m])) > 1
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "More than 1 failed authentication per second"}

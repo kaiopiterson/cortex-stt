@@ -16,7 +16,7 @@ from limits.strategies import FixedWindowRateLimiter
 
 from app.core.access import matches, metrics_enabled, network_allowed
 from app.core.limiter import client_ip
-from app.core.telemetry import telemetry
+from app.core import telemetry
 from app.services.gpu_info import gpu_metrics
 
 router = APIRouter()
@@ -52,6 +52,6 @@ async def metrics(request: Request) -> PlainTextResponse:
         gauges["stt_gpu_available"] = 0
     return PlainTextResponse(
         telemetry.render(gauges),
-        media_type="text/plain; version=0.0.4",
+        media_type="text/plain; version=0.0.4; charset=utf-8",
         headers={"Cache-Control": "no-store"},
     )

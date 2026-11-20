@@ -6,6 +6,7 @@ from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request
 
+from app.core import telemetry
 from app.core.auth import CredentialStoreUnavailable, Identity, identify_client
 from app.core.config import Settings
 from app.core.gateway import Admission, gateway
@@ -59,19 +60,24 @@ async def require_api_key(
 ) -> None:
     identity = await resolve_identity(request, authorization)
     if identity is None:
+        telemetry.auth_failed("rest")
+        telemetry.reject("unauthorized")
         raise HTTPException(
             401,
             "Invalid API credentials" if authorization else "Missing API credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
     if identity.kind == "permanent":
+        telemetry.reject("forbidden_scope")
         raise HTTPException(403, "Forbidden credential scope")
     request.state.app_identity = scope_key(identity.app_id, identity.subject)
     try:
         request.state.admission = await gateway(request).admit(identity, hold_slot=False)
     except UsageLimit as exc:
+        telemetry.reject("quota_exceeded")
         raise HTTPException(429, "Application usage limit exceeded") from exc
     except CredentialStoreUnavailable as exc:
+        telemetry.reject("unavailable")
         raise unavailable() from exc
 
 

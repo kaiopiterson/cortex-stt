@@ -20,6 +20,7 @@ from app.api.common import (
     processing_metadata,
     valid_language,
 )
+from app.core import telemetry
 from app.core.auth import CredentialStoreUnavailable
 from app.core.gateway import gateway
 from app.core.limiter import configured_limit, limiter
@@ -139,8 +140,10 @@ async def transcribe_audio(
         payload["processing"] = processing_metadata(settings)
         return payload
     except UsageLimit as exc:
+        telemetry.reject("quota_exceeded")
         raise HTTPException(429, "Application usage limit exceeded") from exc
     except CredentialStoreUnavailable as exc:
+        telemetry.reject("unavailable")
         raise HTTPException(
             503, "Service temporarily unavailable", headers={"Retry-After": "2"}
         ) from exc
@@ -150,6 +153,7 @@ async def transcribe_audio(
         raise HTTPException(422, "Invalid or unsupported audio") from exc
     except InferenceBusyError as exc:
         gate.refund(reservation)
+        telemetry.reject("server_busy")
         raise HTTPException(
             503, "Inference capacity unavailable", headers={"Retry-After": "2"}
         ) from exc

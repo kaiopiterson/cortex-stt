@@ -13,6 +13,7 @@ import av
 import ctranslate2
 import numpy as np
 from faster_whisper import WhisperModel
+from app.core import telemetry
 from app.core.config import Settings
 from app.services.gpu_info import log_vram
 from app.services.priority import PrioritySlots
@@ -319,17 +320,19 @@ class InferenceService:
         }
 
     def _release_job(self, job: asyncio.Future) -> None:
-        from app.core.telemetry import telemetry
-
         self._pending.discard(job)
         self._semaphore.release()
         if not job.cancelled():
             if job.exception() is None:
                 result = job.result()
-                telemetry.increment("stt_inference_success_total")
-                telemetry.observe("stt_inference_duration_seconds", result.processing_ms / 1000)
+                telemetry.inference_success.inc()
+                telemetry.inference_duration.observe(result.processing_ms / 1000)
+                if result.audio_duration_seconds > 0:
+                    telemetry.inference_rtf.observe(result.rtf)
+                if result.filtered_segments:
+                    telemetry.hallucinations_filtered.inc(result.filtered_segments)
             else:
-                telemetry.increment("stt_inference_failure_total")
+                telemetry.inference_failure.inc()
 
     async def transcribe(
         self,
@@ -366,14 +369,10 @@ class InferenceService:
                 timeout=self.settings.inference_queue_timeout_seconds,
             )
         except asyncio.TimeoutError as exc:
-            from app.core.telemetry import telemetry
-
-            telemetry.increment("stt_inference_busy_total")
+            telemetry.inference_busy.inc()
             raise InferenceBusyError("Inference capacity unavailable") from exc
         queue_wait_ms = (perf_counter() - queue_started) * 1000
-        from app.core.telemetry import telemetry
-
-        telemetry.observe("stt_queue_wait_seconds", queue_wait_ms / 1000)
+        telemetry.queue_wait.observe(queue_wait_ms / 1000)
         if not self.is_ready:
             self._semaphore.release()
             raise ModelNotReadyError("Inference service is stopping")

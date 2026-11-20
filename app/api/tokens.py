@@ -10,6 +10,7 @@ from limits.storage import MemoryStorage
 from limits.strategies import FixedWindowRateLimiter
 from pydantic import BaseModel, Field
 
+from app.core import telemetry
 from app.core.limiter import client_ip
 from app.core.registry import AppRegistry
 
@@ -39,6 +40,7 @@ async def issue_token(
     settings = state.settings
     failure_limit = parse(f"{settings.token_failures_per_minute}/minute")
     if not limits.test(failure_limit, "failure", ip):
+        telemetry.reject("rate_limited")
         raise HTTPException(429, "Rate limit exceeded", headers={"Retry-After": "60"})
     scheme, _, key = (authorization or "").partition(" ")
     registry: AppRegistry | None = getattr(state, "registry", None)
@@ -57,8 +59,10 @@ async def issue_token(
             ) from exc
     if registry is None or app_id is None:
         limits.hit(failure_limit, "failure", ip)
+        telemetry.auth_failed("token")
         raise HTTPException(401, "Invalid API credentials", headers={"WWW-Authenticate": "Bearer"})
     if not limits.hit(parse(f"{settings.token_issuance_per_minute}/minute"), "issuance", app_id):
+        telemetry.reject("rate_limited")
         raise HTTPException(429, "Rate limit exceeded", headers={"Retry-After": "60"})
     try:
         result = await asyncio.to_thread(
@@ -71,6 +75,7 @@ async def issue_token(
     if result is None:
         raise HTTPException(401, "Invalid API credentials", headers={"WWW-Authenticate": "Bearer"})
     token, ttl = result
+    telemetry.tokens_issued.inc()
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
     return {"access_token": token, "token_type": "bearer", "expires_in": ttl}

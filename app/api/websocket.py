@@ -7,6 +7,7 @@ from time import monotonic
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.core.config import Settings
+from app.core import telemetry
 from app.core.auth import CredentialStoreUnavailable, Identity, identify_client
 from app.core.gateway import Admission, gateway
 from app.core.usage import UsageLimit, scope_key
@@ -325,7 +326,19 @@ def credit_unprocessed(gate, admission: Admission | None, session) -> None:
     gate.credit_samples(admission, max(0, unprocessed))
 
 
+ERROR_REASONS = {
+    "unauthorized": "unauthorized",
+    "forbidden_scope": "forbidden_scope",
+    "quota_exceeded": "quota_exceeded",
+    "server_busy": "server_busy",
+}
+
+
 async def websocket_error(websocket: WebSocket, code: str, message: str, close_code: int) -> None:
+    if code in ERROR_REASONS:
+        telemetry.reject(ERROR_REASONS[code])
+    if code == "unauthorized":
+        telemetry.auth_failed("websocket")
     try:
         await websocket.send_json({"type": "error", "code": code, "message": message})
         await websocket.close(code=close_code)
@@ -428,6 +441,9 @@ async def stream_audio(websocket: WebSocket) -> None:
         key_slot = key
         await acquire_session(semaphore, 0.2)
         acquired = True
+        telemetry.stream_sessions.labels(mode).inc()
+        first_audio_at: float | None = None
+        partial_sent = False
         session = StreamingSession(
             settings=settings,
             language=language.lower(),
@@ -533,10 +549,12 @@ async def stream_audio(websocket: WebSocket) -> None:
             command = message.get("text")
             if command is not None:
                 if command == "finish":
+                    finish_at = monotonic()
                     result = await finalize_stream(session, inference)
                     if not await authorized(force=True):
                         return
                     await websocket.send_json(session.event_payload("final", result))
+                    telemetry.stream_final_latency.labels(mode).observe(monotonic() - finish_at)
                     await websocket.close(code=1000)
                     return
                 if command == "ping":
@@ -560,6 +578,8 @@ async def stream_audio(websocket: WebSocket) -> None:
                     await websocket.close(code=1000)
                 return
             session.append_audio(chunk)
+            if first_audio_at is None:
+                first_audio_at = monotonic()
             if session.mode == "utterance":
                 continue
             # Drain already queued audio without reordering control messages.
@@ -586,6 +606,7 @@ async def stream_audio(websocket: WebSocket) -> None:
                 session.append_audio(queued["bytes"])
             skipped = trim_backlog(session)
             if skipped:
+                telemetry.reject("lagging")
                 await websocket.send_json(
                     {
                         "type": "warning",
@@ -598,6 +619,7 @@ async def stream_audio(websocket: WebSocket) -> None:
                 busy_failures = 0
             except InferenceBusyError:
                 busy_failures += 1
+                telemetry.reject("server_busy")
                 await websocket.send_json({"type": "warning", "code": "server_busy"})
                 if busy_failures >= settings.stream_busy_failures:
                     raise
@@ -606,6 +628,9 @@ async def stream_audio(websocket: WebSocket) -> None:
                 if not await authorized():
                     return
                 await websocket.send_json(session.event_payload("partial", latest))
+                if not partial_sent and first_audio_at is not None:
+                    partial_sent = True
+                    telemetry.stream_first_partial.observe(monotonic() - first_audio_at)
     except UsageLimit:
         await websocket_error(websocket, "quota_exceeded", "Application usage limit exceeded", 1008)
     except WebSocketDisconnect:
