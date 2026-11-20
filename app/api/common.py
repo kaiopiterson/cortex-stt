@@ -4,7 +4,6 @@ import secrets
 from typing import Annotated
 from fastapi import Depends, Header, HTTPException, Request
 from app.core.config import Settings
-from app.core.limiter import rate_limit_value
 from app.services.inference import InferenceService, InferenceBusyError
 
 def get_settings_from_state(request: Request) -> Settings:
@@ -26,7 +25,6 @@ def validate_api_key(supplied_key: str | None, settings: Settings) -> bool:
 
 async def require_api_key(settings: SettingsDependency,
                     authorization: Annotated[str | None, Header()] = None) -> None:
-    rate_limit_value.set(settings.rate_limit)
     scheme, separator, token = (authorization or "").partition(" ")
     if not separator or scheme.lower() != "bearer" or not validate_api_key(token, settings):
         raise HTTPException(401, "Invalid API credentials" if authorization else "Missing API credentials",
@@ -50,3 +48,13 @@ def valid_language(value: str) -> bool:
     from faster_whisper.tokenizer import _LANGUAGE_CODES
     return len(value) <= 32 and (value.lower() in {"", "auto"} or
         value.lower().replace("_", "-").split("-")[0] in _LANGUAGE_CODES)
+
+
+def parse_hotwords(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or len(value) > 50:
+        raise ValueError("Invalid hotwords")
+    if any(not isinstance(word, str) or not word.strip() or len(word) > 64 for word in value):
+        raise ValueError("Invalid hotwords")
+    return " ".join(value) or None

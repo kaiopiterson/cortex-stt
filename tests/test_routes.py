@@ -15,7 +15,7 @@ TEST_KEY = "unit-test-only-" + "x" * 32
 
 
 @pytest.fixture
-def application():
+def application(monkeypatch):
     limiter.reset()
     settings = Settings(api_key=TEST_KEY, device="cpu", compute="int8")
     result = TranscriptionResult(
@@ -29,6 +29,7 @@ def application():
     inference.transcribe_window = AsyncMock(return_value=result)
     app = FastAPI()
     app.state.settings = settings
+    monkeypatch.setattr("app.core.limiter.get_settings", lambda: app.state.settings)
     app.state.inference_service = inference
     app.state.stream_slots = asyncio.Semaphore(settings.stream_sessions or settings.sessions)
     app.state.rest_slots = asyncio.Semaphore(settings.rest_concurrency)

@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     model: str = "small"
     device: Literal["cuda", "cpu"] = "cuda"
     device_index: int = Field(default=0, ge=0)
-    compute: Literal["float32", "float16", "int8", "int8_float32", "int8_float16"] = "int8_float32"
+    compute: Literal["float32", "float16", "int8", "int8_float32", "int8_float16"] = "int8_float16"
     language: str = "pt"
     model_cache_dir: str = "/models"
     cpu_threads: int = Field(default=4, ge=1, le=64)
@@ -43,8 +43,11 @@ class Settings(BaseSettings):
     stream_idle_timeout_seconds: int = Field(default=20, ge=5, le=300)
     stream_max_chunk_bytes: int = Field(default=320000, ge=320, le=1048576)
     stream_auth_timeout_seconds: int = Field(default=5, ge=1, le=30)
+    utterance_max_seconds: int = Field(default=15, ge=1, le=60)
+    stream_max_lag_seconds: float = Field(default=3.0, gt=0, le=60)
     stream_busy_failures: int = Field(default=3, ge=1, le=20)
     stream_queue_size: int = Field(default=8, ge=1, le=64)
+    review_threshold: float = Field(default=0.6, ge=0, le=1)
     vad_enabled: bool = True
     vad_threshold: float = Field(default=0.5, gt=0.0, lt=1.0)
     vad_min_silence_ms: int = Field(default=350, ge=100, le=3000)
@@ -69,6 +72,13 @@ class Settings(BaseSettings):
         if not value.strip():
             raise ValueError("Configuration value cannot be empty")
         return value.strip()
+
+    @model_validator(mode="before")
+    @classmethod
+    def device_compute_default(cls, values):
+        if isinstance(values, dict) and values.get("device") == "cpu" and "compute" not in values:
+            return {**values, "compute": "int8"}
+        return values
 
     @model_validator(mode="after")
     def validate_configuration(self):
