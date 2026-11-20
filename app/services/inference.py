@@ -267,11 +267,25 @@ class InferenceService:
             audio_offset_seconds=round(audio_offset_seconds, 3),
         )
 
+    def metrics_snapshot(self) -> dict[str, float]:
+        return {
+            "stt_inference_active": len(self._pending),
+            "stt_inference_queue_depth": len(self._semaphore.waiters),
+            "stt_inference_workers_available": self._semaphore.available,
+        }
+
     def _release_job(self, job: asyncio.Future) -> None:
+        from app.core.telemetry import telemetry
+
         self._pending.discard(job)
         self._semaphore.release()
         if not job.cancelled():
-            job.exception()
+            if job.exception() is None:
+                result = job.result()
+                telemetry.increment('stt_inference_success_total')
+                telemetry.observe('stt_inference_duration_seconds', result.processing_ms / 1000)
+            else:
+                telemetry.increment('stt_inference_failure_total')
 
     async def transcribe(self, audio: np.ndarray | BytesIO, language: str | None = None,
                          initial_prompt: str | None = None, audio_offset_seconds: float = 0.0,
@@ -294,8 +308,14 @@ class InferenceService:
         try:
             await asyncio.wait_for(self._semaphore.acquire(priority), timeout=self.settings.inference_queue_timeout_seconds)
         except asyncio.TimeoutError as exc:
+            from app.core.telemetry import telemetry
+
+            telemetry.increment("stt_inference_busy_total")
             raise InferenceBusyError("Inference capacity unavailable") from exc
         queue_wait_ms = (perf_counter() - queue_started) * 1000
+        from app.core.telemetry import telemetry
+
+        telemetry.observe('stt_queue_wait_seconds', queue_wait_ms / 1000)
         if not self.is_ready:
             self._semaphore.release()
             raise ModelNotReadyError("Inference service is stopping")
