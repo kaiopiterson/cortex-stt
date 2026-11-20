@@ -4,7 +4,6 @@ import secrets
 from typing import Annotated
 from fastapi import Depends, Header, HTTPException, Request
 from app.core.config import Settings
-from app.core.limiter import rate_limit_value
 from app.services.inference import InferenceService, InferenceBusyError
 
 def get_settings_from_state(request: Request) -> Settings:
@@ -26,7 +25,6 @@ def validate_api_key(supplied_key: str | None, settings: Settings) -> bool:
 
 async def require_api_key(settings: SettingsDependency,
                     authorization: Annotated[str | None, Header()] = None) -> None:
-    rate_limit_value.set(settings.rate_limit)
     scheme, separator, token = (authorization or "").partition(" ")
     if not separator or scheme.lower() != "bearer" or not validate_api_key(token, settings):
         raise HTTPException(401, "Invalid API credentials" if authorization else "Missing API credentials",
