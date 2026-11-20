@@ -7,3 +7,5 @@ httpx
 websockets
 slowapi==0.1.9
 pydantic-settings>=2.8,<3
+pytest==8.3.3
+pytest-asyncio==0.24.0
