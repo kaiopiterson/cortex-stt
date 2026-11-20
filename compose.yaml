@@ -6,6 +6,7 @@ services:
       - '127.0.0.1:8000:8000'
     volumes:
       - models:/models
+      - registry:/data
     gpus: all
     restart: unless-stopped
   tunnel:
@@ -15,5 +16,48 @@ services:
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
     restart: unless-stopped
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: [observability]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus:/prometheus
+    secrets:
+      - stt_metrics_token
+    ports:
+      - '127.0.0.1:9090:9090'
+    depends_on:
+      - stt
+    restart: unless-stopped
+  grafana:
+    image: grafana/grafana:12.1.0
+    profiles: [observability]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    secrets:
+      - grafana_admin_password
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana:/var/lib/grafana
+    ports:
+      - '127.0.0.1:3000:3000'
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+secrets:
+  stt_metrics_token:
+    file: ./observability/secrets/stt_metrics_token
+  grafana_admin_password:
+    file: ./observability/secrets/grafana_admin_password
 volumes:
   models:
+  registry:
+  prometheus:
+  grafana:

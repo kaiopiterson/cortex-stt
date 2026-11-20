@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CortexLab STT | Admin</title>
+<style>
+*{box-sizing:border-box}body{background:#101821;color:#edf5fa;font:15px system-ui;margin:0}main{max-width:1200px;margin:auto;padding:24px}section,.tile{background:#192633;border-radius:12px;padding:18px;margin-bottom:16px}h1{font-size:26px}h2{font-size:18px}small,p{color:#b8c8d4}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}.tile strong{display:block;font-size:24px;color:#52d6ba;margin-top:8px}input,button{font:inherit;padding:10px;border-radius:7px;background:#14202b;color:inherit;border:1px solid #52677a;max-width:100%}button{cursor:pointer;margin:4px}button:focus-visible,input:focus-visible{outline:2px solid #52d6ba}.scroll{overflow:auto}table{width:100%;border-collapse:collapse;text-align:left}td,th{padding:10px;border-bottom:1px solid #344656}#secret{overflow-wrap:anywhere;color:#52d6ba}[hidden]{display:none!important}
+</style><main><small>CORTEXLAB / STT ENGINE</small><h1>Administração e observabilidade</h1>
+<section><label for="key">Chave administrativa</label> <input id="key" type="password" autocomplete="off"><button id="login">Conectar</button><button id="logout">Sair</button><p id="status" role="status">Desconectado</p></section>
+<div id="dashboard" hidden><div class="grid" id="metrics"></div>
+<section><h2>Aplicativos e credenciais</h2><label for="name">Nome</label> <input id="name" maxlength="100"><button id="register">Cadastrar</button><p id="secret" role="status"></p><button id="clear">Ocultar chave</button><div class="scroll"><table><thead><tr><th>Aplicativo</th><th>Status</th><th>Ativas</th><th>Ações</th></tr></thead><tbody id="apps"></tbody></table></div></section>
+<section><h2>Cotas por aplicativo</h2><p id="limits"></p><small>Limites definidos no ambiente; somente leitura.</small></section>
+<section><h2>Auditoria agregada UTC</h2><p>Últimos 100 registros. Não some dias e meses.</p><div class="scroll"><table><thead><tr><th>Aplicativo</th><th>Período</th><th>Data</th><th>Consumo</th></tr></thead><tbody id="usage"></tbody></table></div></section></div></main>
+<script>
+"use strict";
+const el=id=>document.getElementById(id);
+let key="",timer=null,generation=0,busy=false;
+async function api(path,options={}){
+ const r=await fetch(path,{...options,cache:"no-store",headers:{Authorization:"Bearer "+key,"Content-Type":"application/json"}});
+ if(!r.ok)throw Error("HTTP "+r.status);
+ return path==="/metrics"?r.text():r.json();
+}
+function cell(row,value){row.insertCell().textContent=String(value);}
+function metric(name,value){const tile=document.createElement("div");tile.className="tile";const label=document.createElement("small");label.textContent=name;const val=document.createElement("strong");val.textContent=value;tile.append(label,val);el("metrics").append(tile);}
+function logout(){generation++;key="";clearInterval(timer);el("key").value="";el("secret").textContent="";el("dashboard").hidden=true;el("status").textContent="Desconectado";for(const id of ["apps","usage","metrics"])el(id).replaceChildren();}
+async function refresh(){
+ if(!key||busy)return;busy=true;const current=generation;
+ try{
+ const [raw,apps,usage]=await Promise.all([api("/metrics"),api("/v1/admin/apps"),api("/v1/admin/usage")]);
+ if(current!==generation)return;
+ const m=new Map(raw.split("\n").filter(x=>x&&!x.startsWith("#")).map(x=>x.split(/\s+/)));
+ const l=apps.limits;el("metrics").replaceChildren();
+ for(const [label,id] of [["Inferências ativas","stt_inference_active"],["Fila","stt_inference_queue_depth"],["Workers livres","stt_inference_workers_available"],["Sessões WS","stt_stream_sessions_active"],["Sucessos","stt_inference_success_total"],["Falhas","stt_inference_failure_total"]])metric(label,m.get(id)??"—");
+ const gpu=m.get("stt_gpu_available")==="1";metric("GPU",gpu?(Number(m.get("stt_gpu_utilization_ratio"))*100).toFixed(0)+"%":"Indisponível");
+ metric("VRAM",gpu?(Number(m.get("stt_gpu_memory_used_bytes"))/1048576).toFixed(0)+" MiB":"—");
+ const count=Number(m.get("stt_inference_duration_seconds_count"));metric("Inferência média",count>0?(1000*Number(m.get("stt_inference_duration_seconds_sum"))/count).toFixed(1)+" ms":"—");
+ el("limits").textContent=l.requests_per_minute+"/min · "+l.daily_seconds/60+" min/dia · "+l.monthly_seconds/3600+" h/mês · "+l.concurrency+" simultâneas";
+ el("apps").replaceChildren();const names=new Map();
+ for(const app of apps.data){names.set(app.id,app.name);const row=el("apps").insertRow();cell(row,app.name);cell(row,app.status);cell(row,apps.active[app.id]??0);const actions=row.insertCell();
+ for(const [action,label] of [["rotate","Rotacionar"],["revoke-tokens","Revogar tokens"],["revoke","Bloquear"]]){const b=document.createElement("button");b.textContent=label;b.disabled=app.status==="revoked";b.onclick=()=>{if(confirm(label+"? Credenciais existentes serão invalidadas."))mutate("/v1/admin/apps/"+encodeURIComponent(app.id)+"/"+action,{});};actions.append(b);}}
+ el("usage").replaceChildren();for(const item of usage.data){const row=el("usage").insertRow();cell(row,names.get(item.app_id)??item.app_id);cell(row,item.period);cell(row,item.bucket);cell(row,item.unit==="samples"?(item.amount/l.sample_rate).toFixed(2)+" s":item.amount+" req");}
+ el("dashboard").hidden=false;el("status").textContent="Atualizado às "+new Date().toLocaleTimeString("pt-BR");
+ }catch(e){if(current===generation){if(e.message==="HTTP 401")logout();el("status").textContent="Falha: "+e.message;}}finally{busy=false;}
+}
+async function mutate(path,body){const current=generation;el("secret").textContent="";try{const data=await api(path,{method:"POST",body:JSON.stringify(body)});if(current!==generation)return;if(data.api_key)el("secret").textContent="Copie agora: "+data.api_key;await refresh();}catch(e){if(current===generation)el("status").textContent="Falha: "+e.message;}}
+el("login").onclick=()=>{const value=el("key").value;logout();key=value;refresh();timer=setInterval(refresh,15000);};
+el("logout").onclick=logout;el("clear").onclick=()=>el("secret").textContent="";
+el("register").onclick=()=>{const name=el("name").value.trim();if(name)mutate("/v1/admin/apps",{name});};
+</script></html>

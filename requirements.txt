@@ -1,12 +1,17 @@
-fastapi==0.115.12
+# Dependências diretas de produção, fixadas nas versões validadas.
+# Transitivas e hashes ficam em requirements.lock (ver docs/dependencies.md).
+fastapi==0.165.0
+starlette==1.10.0
 uvicorn[standard]==0.34.2
 faster-whisper==1.1.1
-python-multipart==0.0.20
-numpy<2
-websockets
+python-multipart==0.0.34
+numpy==1.26.4
+websockets==17.4
 slowapi==0.1.9
-pydantic-settings>=2.8,<3
-requests==2.32.5
+limits==5.8.0
+prometheus-client==0.26.0
+pydantic-settings==2.16.3
+requests==2.34.2
 huggingface-hub==0.30.2
 ctranslate2==4.6.0
 av==14.2.0

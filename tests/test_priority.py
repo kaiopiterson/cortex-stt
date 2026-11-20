@@ -16,8 +16,10 @@ async def test_priority_and_fifo():
         order.append(name)
         slots.release()
 
-    tasks = [asyncio.create_task(job(name, priority)) for name, priority in
-             [("normal", 1), ("first", 0), ("second", 0)]]
+    tasks = [
+        asyncio.create_task(job(name, priority))
+        for name, priority in [("normal", 1), ("first", 0), ("second", 0)]
+    ]
     await asyncio.sleep(0)
     slots.release()
     await asyncio.gather(*tasks)
