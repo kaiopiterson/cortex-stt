@@ -1,7 +1,9 @@
 # Observabilidade v0.3
 
-Configure STT_ADMIN_KEY com segredo aleatório independente de 32 ou mais
-caracteres. Ausência desabilita /metrics e /v1/admin/usage (404).
+Configure STT_METRICS_TOKEN (somente leitura, ≥ 32 caracteres, distinto das
+demais chaves) para o Prometheus. /metrics aceita esse token ou STT_ADMIN_KEY;
+o token de métricas recebe 401 em todas as rotas /v1/admin/*. Sem nenhum dos
+dois, /metrics responde 404. Acesso limitado a STT_ADMIN_ALLOWED_NETWORKS.
 Não exponha essas rotas no túnel público: negue /metrics e /v1/admin/* no
 ingress antes da regra geral do STT, ou use rede de gerenciamento privada.
 Nenhuma regra de túnel é alterada automaticamente.
@@ -16,7 +18,7 @@ Exemplo para Prometheus executado no host (ajuste target se estiver em container
         scrape_interval: 15s
         authorization:
           type: Bearer
-          credentials_file: /etc/prometheus/secrets/stt-admin
+          credentials_file: /etc/prometheus/secrets/stt-metrics-token
         static_configs:
           - targets: ["127.0.0.1:8000"]
 

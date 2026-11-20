@@ -106,7 +106,13 @@ def create_app() -> FastAPI:
 
     # Registro do router consolidado
     application.add_middleware(BodyLimit)
-    application.include_router(build_router(include_admin=get_settings().admin_key is not None))
+    settings = get_settings()
+    application.include_router(
+        build_router(
+            include_admin=settings.admin_key is not None,
+            include_metrics=settings.admin_key is not None or settings.metrics_token is not None,
+        )
+    )
     return application
 
 

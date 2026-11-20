@@ -1,56 +1,50 @@
-"""Read-only operational endpoints, disabled without a separate admin secret."""
+"""Administrative endpoints (CortexLab STT v0.3.0).
+
+Enabled only when STT_ADMIN_KEY is set and reachable only from
+STT_ADMIN_ALLOWED_NETWORKS. Every mutation is recorded in admin_audit.
+"""
 
 import asyncio
-import secrets
+import json
 from pathlib import Path
-from pydantic import BaseModel, Field
-from fastapi.responses import HTMLResponse
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse, JSONResponse
-
-from app.core.telemetry import telemetry
-from app.core.limiter import client_ip
+from fastapi.responses import HTMLResponse, JSONResponse
 from limits import parse
 from limits.storage import MemoryStorage
 from limits.strategies import FixedWindowRateLimiter
-from app.services.gpu_info import gpu_metrics
+from pydantic import BaseModel, Field
+
+from app.core.access import actor, admin_enabled, matches, network_allowed
+from app.core.limiter import client_ip
 
 router = APIRouter()
 admin_failures = FixedWindowRateLimiter(MemoryStorage())
+FAILURES = parse("30/minute")
 
 
 async def require_admin(
     request: Request, authorization: Annotated[str | None, Header()] = None
 ) -> None:
-    secret = request.app.state.settings.admin_key
-    if secret is None:
+    if not admin_enabled(request) or not network_allowed(request):
         raise HTTPException(404, "Not found")
-    if not admin_failures.test(parse("30/minute"), client_ip(request)):
+    if not admin_failures.test(FAILURES, client_ip(request)):
         raise HTTPException(429, "Rate limit exceeded", headers={"Retry-After": "60"})
     scheme, _, token = (authorization or "").partition(" ")
-    if scheme.lower() != "bearer" or not secrets.compare_digest(
-        token.encode(), secret.get_secret_value().encode()
-    ):
-        admin_failures.hit(parse("30/minute"), client_ip(request))
+    if scheme.lower() != "bearer" or not matches(token, request.app.state.settings.admin_key):
+        admin_failures.hit(FAILURES, client_ip(request))
         raise HTTPException(401, "Invalid credentials", headers={"WWW-Authenticate": "Bearer"})
 
 
-@router.get("/metrics", include_in_schema=False, dependencies=[Depends(require_admin)])
-async def metrics(request: Request) -> PlainTextResponse:
-    state = request.app.state
-    gauges = state.inference_service.metrics_snapshot()
-    gauges["stt_registered_app_operations_active"] = sum(state.app_slots.counts.values())
-    gauges["stt_stream_sessions_active"] = sum(getattr(state, "stream_key_counts", {}).values())
-    if state.settings.device == "cuda":
-        gauges.update(await asyncio.to_thread(gpu_metrics, state.settings.device_index))
-    else:
-        gauges["stt_gpu_available"] = 0
-    return PlainTextResponse(
-        telemetry.render(gauges),
-        media_type="text/plain; version=0.0.4",
-        headers={"Cache-Control": "no-store"},
+async def audit(request: Request, action: str, app_id: str | None, detail: dict | None = None):
+    """Record an administrative mutation. Never include secrets in detail."""
+    await asyncio.to_thread(
+        request.app.state.registry.record_audit,
+        action,
+        app_id,
+        actor(request),
+        json.dumps(detail) if detail else None,
     )
 
 
@@ -88,7 +82,9 @@ def invalidate_caches(request: Request, app_id: str | None = None) -> None:
 
 @router.get("/admin", include_in_schema=False)
 async def dashboard(request: Request):
-    if request.app.state.settings.admin_key is None:
+    # The page holds no secret: the operator types the admin key into it and
+    # every API call it makes is authenticated. Only the network is checked here.
+    if not admin_enabled(request) or not network_allowed(request):
         raise HTTPException(404, "Not found")
     html = await asyncio.to_thread(
         (Path(__file__).resolve().parents[1] / "admin.html").read_text, encoding="utf-8"
@@ -137,6 +133,7 @@ async def register_app(request: Request, body: Registration):
         app_id, key = await asyncio.to_thread(request.app.state.registry.register, body.name)
     except ValueError as exc:
         raise HTTPException(422, "Invalid application name") from exc
+    await audit(request, "register", app_id, {"name": body.name})
     return JSONResponse(
         {"id": app_id, "api_key": key}, status_code=201, headers={"Cache-Control": "no-store"}
     )
@@ -164,6 +161,7 @@ async def manage_app(request: Request, app_id: str, action: str):
     except ValueError as exc:
         raise HTTPException(409, "Operation unavailable") from exc
     invalidate_caches(request, app_id)
+    await audit(request, action, app_id)
     payload = {"id": app_id, "action": action}
     if action == "rotate":
         payload["api_key"] = result
@@ -189,4 +187,11 @@ async def update_limits(request: Request, app_id: str, body: LimitsUpdate):
     except ValueError as exc:
         raise HTTPException(422, "Invalid limits") from exc
     invalidate_caches(request, app_id)
+    await audit(request, "set-limits", app_id, changes)
     return JSONResponse({"id": app_id, "limits": changes}, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/v1/admin/audit", include_in_schema=False, dependencies=[Depends(require_admin)])
+async def audit_log(request: Request, limit: Annotated[int, Query(ge=1, le=1000)] = 100):
+    rows = await asyncio.to_thread(request.app.state.registry.audit_events, limit)
+    return JSONResponse({"data": rows}, headers={"Cache-Control": "no-store"})

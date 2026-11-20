@@ -2,6 +2,7 @@
 
 from app.core.auth import CredentialStoreUnavailable, identify_client
 from app.api.admin import require_admin
+from app.api.metrics import require_metrics
 from starlette.requests import Request
 from limits import parse
 from limits.storage import MemoryStorage
@@ -23,11 +24,15 @@ class BodyLimit:
             return
         settings = scope["app"].state.settings
         path = scope["path"]
-        if path in {"/admin", "/metrics", "/v1/admin"} or path.startswith("/v1/admin/"):
+        # Operational routes are authenticated before any body is read.
+        guard = None
+        if path == "/metrics":
+            guard = require_metrics
+        elif path == "/v1/admin" or path.startswith("/v1/admin/"):
+            guard = require_admin
+        if guard is not None:
             try:
-                await require_admin(
-                    Request(scope), HTTPConnection(scope).headers.get("Authorization")
-                )
+                await guard(Request(scope), HTTPConnection(scope).headers.get("Authorization"))
             except HTTPException as exc:
                 await JSONResponse(
                     {"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers

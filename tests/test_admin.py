@@ -5,12 +5,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.admin import router
+from app.api.metrics import router as metrics_router
 from app.core.config import Settings
 
 
 def test_admin_isolation():
     app = FastAPI()
     app.include_router(router)
+    app.include_router(metrics_router)
     app.state.settings = Settings(api_key="x" * 40, device="cpu", compute="int8")
     with TestClient(app) as client:
         assert client.get("/metrics").status_code == 404
