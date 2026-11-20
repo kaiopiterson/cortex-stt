@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     )
     app_name: str = "CortexLab STT"
     app_version: str = "0.3.0"
+    app_requests_per_minute: int = Field(default=60, ge=1)
+    app_daily_audio_seconds: int = Field(default=3600, ge=1)
+    app_monthly_audio_seconds: int = Field(default=36000, ge=1)
+    app_concurrency: int = Field(default=2, ge=1)
     registry_path: str = "/data/registry.sqlite3"
     environment: Literal["development", "staging", "production"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
