@@ -11,7 +11,8 @@ class Settings(BaseSettings):
         case_sensitive=False, extra="ignore", frozen=True,
     )
     app_name: str = "CortexLab STT"
-    app_version: str = "0.2.0"
+    app_version: str = "0.3.0"
+    registry_path: str = "/data/registry.sqlite3"
     environment: Literal["development", "staging", "production"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     api_key: SecretStr
